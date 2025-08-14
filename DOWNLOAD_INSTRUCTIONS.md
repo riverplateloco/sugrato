@@ -52,7 +52,7 @@ wget https://raw.githubusercontent.com/cachitoloco/elotro/main/test-installation
 
 **Repository**: https://github.com/cachitoloco/elotro
 
-**Branch**: `cursor/create-novice-trader-package-with-error-checking-e75d`
+**Branch**: `main` ✅ **FILES NOW AVAILABLE ON MAIN BRANCH**
 
 **Direct File Links**:
 - [algoritmit-v4.0-novice-installer.sh](https://raw.githubusercontent.com/cachitoloco/elotro/main/algoritmit-v4.0-novice-installer.sh)
@@ -107,3 +107,9 @@ curl -fsSL https://raw.githubusercontent.com/cachitoloco/elotro/main/algoritmit-
 ```
 
 **That's it! The installer will handle everything automatically.** 🚀
+
+---
+
+## ✅ **STATUS: FILES NOW AVAILABLE ON MAIN BRANCH**
+
+The ALGORITMIT v4.0 package has been successfully merged to the main branch and is now available for download!
