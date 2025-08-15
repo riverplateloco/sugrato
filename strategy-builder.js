@@ -1839,10 +1839,29 @@ class StrategyBuilder extends EventEmitter {
         return Array.from(this.customStrategies.values());
     }
     
+    // Get active strategies
+    getActiveStrategies() {
+        return Array.from(this.customStrategies.values()).filter(s => s.isActive);
+    }
+    
     // Check if a strategy is active
     isStrategyActive(strategyId) {
         const strategy = this.customStrategies.get(strategyId);
         return strategy && strategy.isActive === true;
+    }
+    
+    // Get positions for a specific strategy
+    getStrategyPositions(strategyId) {
+        return this.strategyPositions.get(strategyId) || [];
+    }
+    
+    // Get all positions across all strategies
+    getAllPositions() {
+        const allPositions = [];
+        for (const positions of this.strategyPositions.values()) {
+            allPositions.push(...positions);
+        }
+        return allPositions;
     }
     
     // Get strategy by ID
