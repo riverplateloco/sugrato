@@ -95,11 +95,11 @@ class StrategyBuilder extends EventEmitter {
             
             // Smart SELL thresholds (adaptive based on volatility)
             smartSellThresholds: {
-                quick: strategy.profitRangeMin * 0.5,    // 50% of target - quick profit
-                normal: strategy.profitRangeMin,         // 100% of target - normal profit
-                good: strategy.profitRangeMin * 2,       // 200% of target - good profit
-                excellent: strategy.profitRangeMin * 5,  // 500% of target - excellent profit
-                extreme: strategy.profitRangeMin * 10    // 1000% of target - extreme profit
+                quick: (config.profitRangeMin || config.profitTarget || 1) * 0.5,    // 50% of target - quick profit
+                normal: (config.profitRangeMin || config.profitTarget || 1),         // 100% of target - normal profit
+                good: (config.profitRangeMin || config.profitTarget || 1) * 2,       // 200% of target - good profit
+                excellent: (config.profitRangeMin || config.profitTarget || 1) * 5,  // 500% of target - excellent profit
+                extreme: (config.profitRangeMin || config.profitTarget || 1) * 10    // 1000% of target - extreme profit
             },
             
             // Position sizing based on dip severity
