@@ -5483,11 +5483,14 @@ class WorldchainTradingBot {
             console.log('1. 📋 View All Custom Strategies');
             console.log('2. ➕ Create New Strategy');
             console.log('3. ▶️  Start Strategy');
-            console.log('4. ⏹️  Stop Strategy');
-            console.log('5. 🗑️  Delete Strategy');
-                    console.log('6. 📊 Strategy Statistics');
-        console.log('7. ⚡ Quick Console Commands');
-        console.log('8. 🔙 Back to Main Menu');
+            console.log('4. 🚀 Start All Strategies');
+            console.log('5. ⏹️  Stop Strategy');
+            console.log('6. 🛑 Stop All Strategies');
+            console.log('7. 🗑️  Delete Strategy');
+            console.log('8. 📊 Strategy Statistics');
+            console.log('9. 📈 Multi-Strategy Dashboard');
+            console.log('10. ⚡ Quick Console Commands');
+            console.log('11. 🔙 Back to Main Menu');
         console.log('────────────────────────────────────────────────────────────');
 
             const choice = await this.getUserInput('Select option: ');
@@ -5503,18 +5506,27 @@ class WorldchainTradingBot {
                     await this.startCustomStrategy();
                     break;
                 case '4':
-                    await this.stopCustomStrategy();
+                    await this.startAllStrategies();
                     break;
                 case '5':
-                    await this.deleteCustomStrategy();
+                    await this.stopCustomStrategy();
                     break;
                 case '6':
-                    await this.viewStrategyStatistics();
+                    await this.stopAllStrategies();
                     break;
                 case '7':
-                    await this.quickConsoleCommands();
+                    await this.deleteCustomStrategy();
                     break;
                 case '8':
+                    await this.viewStrategyStatistics();
+                    break;
+                case '9':
+                    await this.multiStrategyDashboard();
+                    break;
+                case '10':
+                    await this.quickConsoleCommands();
+                    break;
+                case '11':
                     return;
                 default:
                     console.log('❌ Invalid option. Please try again.');
@@ -6178,6 +6190,116 @@ class WorldchainTradingBot {
         await this.getUserInput('\nPress Enter to continue...');
     }
 
+    // Start all custom strategies
+    async startAllStrategies() {
+        console.clear();
+        console.log('🚀 START ALL CUSTOM STRATEGIES');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const strategies = this.strategyBuilder.getAllStrategies();
+        
+        if (strategies.length === 0) {
+            console.log('📭 No custom strategies found.');
+            console.log('💡 Create strategies first to start multi-token trading.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Show all strategies and their status
+        console.log('📋 All Strategies Status:');
+        const stoppedStrategies = [];
+        
+        strategies.forEach((strategy, index) => {
+            const isActive = this.strategyBuilder.isStrategyActive(strategy.id);
+            const statusIcon = isActive ? '🟢' : '🔴';
+            const statusText = isActive ? 'ACTIVE' : 'STOPPED';
+            
+            console.log(`${index + 1}. ${statusIcon} ${strategy.name} [${statusText}]`);
+            console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+            console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+            console.log(`   💰 Amount: ${strategy.tradeAmount} WLD | 🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+            
+            if (!isActive) {
+                stoppedStrategies.push(strategy);
+            }
+        });
+
+        if (stoppedStrategies.length === 0) {
+            console.log('\n✅ All strategies are already active!');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log(`\n📊 Found ${stoppedStrategies.length} stopped strategies out of ${strategies.length} total`);
+        
+        const confirm = await this.getUserInput('Start all stopped strategies? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Operation cancelled.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Get wallet for all strategies (use the same wallet for simplicity)
+        console.log('\n💼 Wallet Selection for All Strategies:');
+        if (this.wallets.length === 0) {
+            console.log('❌ No wallets available. Add a wallet first!');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log('Available Wallets:');
+        this.wallets.forEach((wallet, index) => {
+            console.log(`${index + 1}. ${wallet.name} (${wallet.address})`);
+        });
+
+        const walletChoice = await this.getUserInput('Select wallet for all strategies (number): ');
+        const walletIndex = parseInt(walletChoice) - 1;
+        
+        if (walletIndex < 0 || walletIndex >= this.wallets.length) {
+            console.log('❌ Invalid wallet selection.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        const walletObject = this.wallets[walletIndex];
+
+        console.log(`\n🚀 Starting ${stoppedStrategies.length} strategies...`);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const strategy of stoppedStrategies) {
+            try {
+                console.log(`   ▶️ Starting: ${strategy.name} (WLD → ${strategy.targetTokenSymbol || strategy.targetToken})`);
+                this.strategyBuilder.startStrategy(strategy.id, walletObject);
+                successCount++;
+                
+                // Brief pause between starts
+                await this.sleep(500);
+                
+            } catch (error) {
+                console.error(`   ❌ Failed to start ${strategy.name}: ${error.message}`);
+                errorCount++;
+            }
+        }
+
+        console.log(`\n✅ Multi-Strategy Start Complete!`);
+        console.log(`   🟢 Successfully started: ${successCount} strategies`);
+        if (errorCount > 0) {
+            console.log(`   🔴 Failed to start: ${errorCount} strategies`);
+        }
+        
+        console.log(`\n🎯 Now monitoring ${successCount} token pairs simultaneously:`);
+        stoppedStrategies.forEach(strategy => {
+            console.log(`   📊 ${strategy.name}: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+        });
+        
+        console.log(`\n💡 Use "Multi-Strategy Dashboard" to monitor all active strategies`);
+        console.log(`   📈 Each strategy operates independently on its token pair`);
+        console.log(`   🔄 All strategies can run simultaneously without conflicts`);
+
+        await this.getUserInput('Press Enter to continue...');
+    }
+
     // Stop custom strategy
     async stopCustomStrategy() {
         console.clear();
@@ -6221,6 +6343,72 @@ class WorldchainTradingBot {
         }
 
         await this.getUserInput('\nPress Enter to continue...');
+    }
+
+    // Stop all custom strategies
+    async stopAllStrategies() {
+        console.clear();
+        console.log('🛑 STOP ALL CUSTOM STRATEGIES');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const activeStrategies = this.strategyBuilder.getAllStrategies().filter(s => 
+            this.strategyBuilder.isStrategyActive(s.id)
+        );
+        
+        if (activeStrategies.length === 0) {
+            console.log('📭 No active strategies found.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Show all active strategies
+        console.log('🟢 Currently Active Strategies:');
+        activeStrategies.forEach((strategy, index) => {
+            console.log(`${index + 1}. ${strategy.name}`);
+            console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+            console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+            console.log(`   💰 Amount: ${strategy.tradeAmount} WLD | 🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+        });
+
+        console.log(`\n📊 Found ${activeStrategies.length} active strategies`);
+        
+        const confirm = await this.getUserInput('Stop all active strategies? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Operation cancelled.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log(`\n🛑 Stopping ${activeStrategies.length} strategies...`);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const strategy of activeStrategies) {
+            try {
+                console.log(`   ⏹️ Stopping: ${strategy.name} (WLD → ${strategy.targetTokenSymbol || strategy.targetToken})`);
+                this.strategyBuilder.stopStrategy(strategy.id);
+                successCount++;
+                
+                // Brief pause between stops
+                await this.sleep(300);
+                
+            } catch (error) {
+                console.error(`   ❌ Failed to stop ${strategy.name}: ${error.message}`);
+                errorCount++;
+            }
+        }
+
+        console.log(`\n✅ Multi-Strategy Stop Complete!`);
+        console.log(`   🟢 Successfully stopped: ${successCount} strategies`);
+        if (errorCount > 0) {
+            console.log(`   🔴 Failed to stop: ${errorCount} strategies`);
+        }
+        
+        console.log(`\n💡 All strategies have been stopped.`);
+        console.log(`   📊 You can restart individual strategies or use "Start All Strategies"`);
+        console.log(`   🔄 Strategies will resume from where they left off`);
+
+        await this.getUserInput('Press Enter to continue...');
     }
 
     // Delete custom strategy
@@ -6370,6 +6558,106 @@ class WorldchainTradingBot {
         }
         
         await this.getUserInput('\nPress Enter to continue...');
+    }
+
+    // Multi-Strategy Dashboard
+    async multiStrategyDashboard() {
+        console.clear();
+        console.log('📈 MULTI-STRATEGY DASHBOARD');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const strategies = this.strategyBuilder.getAllStrategies();
+        
+        if (strategies.length === 0) {
+            console.log('📭 No strategies found.');
+            console.log('💡 Create strategies first to use the dashboard.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        const activeStrategies = strategies.filter(s => this.strategyBuilder.isStrategyActive(s.id));
+        const stoppedStrategies = strategies.filter(s => !this.strategyBuilder.isStrategyActive(s.id));
+
+        // Overall statistics
+        console.log('📊 OVERALL STATISTICS:');
+        console.log(`   📈 Total Strategies: ${strategies.length}`);
+        console.log(`   🟢 Active Strategies: ${activeStrategies.length}`);
+        console.log(`   🔴 Stopped Strategies: ${stoppedStrategies.length}`);
+        
+        // Calculate total profit and trades
+        const totalProfit = strategies.reduce((sum, s) => sum + (s.totalProfit || 0), 0);
+        const totalTrades = strategies.reduce((sum, s) => sum + (s.totalTrades || 0), 0);
+        const totalCycles = strategies.reduce((sum, s) => sum + (s.completedCycles || 0), 0);
+        
+        console.log(`   💰 Total Profit: ${totalProfit.toFixed(6)} WLD`);
+        console.log(`   📊 Total Trades: ${totalTrades}`);
+        console.log(`   🔄 Total Cycles: ${totalCycles}`);
+        console.log('');
+
+        // Active strategies detailed view
+        if (activeStrategies.length > 0) {
+            console.log('🟢 ACTIVE STRATEGIES:');
+            console.log('─'.repeat(80));
+            
+            activeStrategies.forEach((strategy, index) => {
+                const openPositions = (strategy.positions || []).filter(p => p.status === 'open');
+                const totalWLD = openPositions.reduce((sum, pos) => sum + (pos.entryAmountWLD || 0), 0);
+                const totalTokens = openPositions.reduce((sum, pos) => sum + (pos.entryAmountToken || 0), 0);
+                
+                console.log(`${index + 1}. ${strategy.name}`);
+                console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+                console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+                console.log(`   💰 Trade Amount: ${strategy.tradeAmount} WLD`);
+                console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+                console.log(`   📊 Open Positions: ${openPositions.length} | 💰 Invested: ${totalWLD.toFixed(6)} WLD`);
+                console.log(`   📈 Total Trades: ${strategy.totalTrades || 0} | 💰 Profit: ${(strategy.totalProfit || 0).toFixed(6)} WLD`);
+                
+                if (strategy.dcaConfig && strategy.dcaConfig.enabled) {
+                    console.log(`   📈 DCA: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+                }
+                console.log('');
+            });
+        }
+
+        // Stopped strategies summary
+        if (stoppedStrategies.length > 0) {
+            console.log('🔴 STOPPED STRATEGIES:');
+            console.log('─'.repeat(80));
+            
+            stoppedStrategies.forEach((strategy, index) => {
+                console.log(`${index + 1}. ${strategy.name}`);
+                console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+                console.log(`   📈 Total Trades: ${strategy.totalTrades || 0} | 💰 Profit: ${(strategy.totalProfit || 0).toFixed(6)} WLD`);
+                console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+                console.log('');
+            });
+        }
+
+        // Quick actions menu
+        console.log('⚡ QUICK ACTIONS:');
+        console.log('1. 🚀 Start All Stopped Strategies');
+        console.log('2. 🛑 Stop All Active Strategies');
+        console.log('3. 📊 Refresh Dashboard');
+        console.log('4. 🔙 Back to Strategy Builder');
+
+        const choice = await this.getUserInput('\nSelect action (1-4): ');
+
+        switch (choice) {
+            case '1':
+                await this.startAllStrategies();
+                break;
+            case '2':
+                await this.stopAllStrategies();
+                break;
+            case '3':
+                await this.multiStrategyDashboard();
+                break;
+            case '4':
+                return;
+            default:
+                console.log('❌ Invalid choice.');
+                await this.getUserInput('Press Enter to continue...');
+        }
     }
 
     // View strategy statistics

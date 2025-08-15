@@ -423,6 +423,25 @@ class StrategyBuilder extends EventEmitter {
                 }
             }
             
+            // Multi-strategy status display (every 20 checks = ~100 seconds)
+            if (activeState.checksPerformed % 20 === 0) {
+                const allActiveStrategies = this.getActiveStrategies();
+                if (allActiveStrategies.length > 1) {
+                    console.log(`\n🚀 MULTI-STRATEGY STATUS (${allActiveStrategies.length} Active)`);
+                    console.log(`════════════════════════════════════════════════════════════`);
+                    
+                    allActiveStrategies.forEach((activeStrategy, index) => {
+                        const activePositions = (activeStrategy.positions || []).filter(p => p.status === 'open');
+                        const totalWLD = activePositions.reduce((sum, pos) => sum + (pos.entryAmountWLD || 0), 0);
+                        const totalTokens = activePositions.reduce((sum, pos) => sum + (pos.entryAmountToken || 0), 0);
+                        const averagePrice = totalTokens > 0 ? totalWLD / totalTokens : 0;
+                        
+                        console.log(`${index + 1}. ${activeStrategy.name}: ${activePositions.length} pos | 💰 ${totalWLD.toFixed(6)} WLD | 💹 ${(activeStrategy.totalProfit || 0).toFixed(6)} WLD | 🔄 ${activeStrategy.completedCycles || 0}/${activeStrategy.maxCycles || '∞'}`);
+                    });
+                    console.log(`════════════════════════════════════════════════════════════`);
+                }
+            }
+            
             // Detailed status update (every 10 checks = ~50 seconds)
             if (activeState.checksPerformed % 10 === 0) {
                 console.log(`\n📊 STRATEGY STATUS: ${strategy.name}`);
@@ -2065,6 +2084,11 @@ class StrategyBuilder extends EventEmitter {
         }
     }
     
+    // Get all active strategies
+    getActiveStrategies() {
+        return this.getAllStrategies().filter(s => s.isActive);
+    }
+
     // Get strategy statistics
     getStrategyStatistics() {
         const strategies = this.getAllStrategies();
