@@ -23,22 +23,9 @@ class WorldchainTradingBot {
         this.walletsPath = path.join(__dirname, 'wallets.json');
         this.tokensPath = path.join(__dirname, 'discovered_tokens.json');
         
-        // Worldchain RPC endpoint (Layer 2) - Multiple endpoints for reliability
-        const rpcEndpoints = [
-            process.env.WORLDCHAIN_RPC_URL,
-            'https://worldchain-mainnet.g.alchemy.com/public',
-            'https://worldchain.drpc.org',
-            'https://worldchain-rpc.publicnode.com'
-        ].filter(Boolean);
-        
-        // Create provider with Worldchain network configuration
-        const worldchainNetwork = {
-            name: 'worldchain',
-            chainId: 480,
-            ensAddress: null
-        };
-        
-        this.provider = new ethers.JsonRpcProvider(rpcEndpoints[0], worldchainNetwork);
+        // Enhanced RPC Fallback System
+        this.rpcManager = this.initializeRPCManager();
+        this.provider = this.rpcManager.getCurrentProvider();
         
         this.config = this.loadConfig();
         this.wallets = this.loadWallets();
@@ -127,6 +114,326 @@ class WorldchainTradingBot {
             testSwapResults: [],
             maxTestSwaps: 3 // Maximum test swaps to perform
         };
+    }
+
+    // Initialize RPC Manager with fallback system
+    initializeRPCManager() {
+        const worldchainNetwork = {
+            name: 'worldchain',
+            chainId: 480,
+            ensAddress: null
+        };
+
+        // Enhanced RPC endpoints with QuickNode as primary
+        const rpcEndpoints = [
+            // Primary: QuickNode endpoint (high performance, reliable)
+            'https://patient-patient-waterfall.worldchain-mainnet.quiknode.pro/cea629fe80a05630338845dc1fd58f8da329b083/',
+            
+            // Secondary: Environment variable (custom endpoint)
+            process.env.WORLDCHAIN_RPC_URL,
+            
+            // Tertiary: Public endpoints (fallback)
+            'https://worldchain-mainnet.g.alchemy.com/public',
+            'https://worldchain.drpc.org',
+            'https://worldchain-rpc.publicnode.com',
+            'https://rpc.worldchain.org'
+        ].filter(Boolean);
+
+        console.log('🌐 Initializing RPC Fallback System...');
+        console.log(`   📊 Found ${rpcEndpoints.length} RPC endpoints`);
+        
+        const rpcManager = {
+            endpoints: rpcEndpoints,
+            currentIndex: 0,
+            providers: [],
+            healthChecks: {},
+            lastHealthCheck: 0,
+            healthCheckInterval: 30000, // 30 seconds
+            maxRetries: 3,
+            retryDelay: 2000, // 2 seconds
+
+            // Initialize all providers
+            initialize() {
+                this.endpoints.forEach((endpoint, index) => {
+                    try {
+                        const provider = new ethers.JsonRpcProvider(endpoint, worldchainNetwork);
+                        this.providers.push(provider);
+                        this.healthChecks[index] = {
+                            isHealthy: true,
+                            lastCheck: 0,
+                            consecutiveFailures: 0,
+                            responseTime: 0
+                        };
+                        console.log(`   ✅ Provider ${index + 1}: ${this.getEndpointDisplay(endpoint)}`);
+                    } catch (error) {
+                        console.log(`   ❌ Provider ${index + 1}: ${this.getEndpointDisplay(endpoint)} - Failed to initialize`);
+                        this.healthChecks[index] = {
+                            isHealthy: false,
+                            lastCheck: 0,
+                            consecutiveFailures: 999,
+                            responseTime: 0
+                        };
+                    }
+                });
+            },
+
+            // Get current provider
+            getCurrentProvider() {
+                if (this.providers.length === 0) {
+                    throw new Error('No RPC providers available');
+                }
+                return this.providers[this.currentIndex];
+            },
+
+            // Get current endpoint display (masked for security)
+            getCurrentEndpointDisplay() {
+                return this.getEndpointDisplay(this.endpoints[this.currentIndex]);
+            },
+
+            // Mask endpoint for display (hide API keys)
+            getEndpointDisplay(endpoint) {
+                if (!endpoint) return 'Unknown';
+                
+                // QuickNode endpoint
+                if (endpoint.includes('quiknode.pro')) {
+                    const parts = endpoint.split('/');
+                    return `QuickNode (${parts[parts.length - 2]})`;
+                }
+                
+                // Alchemy endpoint
+                if (endpoint.includes('alchemy.com')) {
+                    return 'Alchemy Public';
+                }
+                
+                // DRPC endpoint
+                if (endpoint.includes('drpc.org')) {
+                    return 'DRPC Public';
+                }
+                
+                // PublicNode endpoint
+                if (endpoint.includes('publicnode.com')) {
+                    return 'PublicNode';
+                }
+                
+                // Custom endpoint
+                if (endpoint.includes('worldchain.org')) {
+                    return 'Worldchain Official';
+                }
+                
+                // Environment variable endpoint
+                if (endpoint === process.env.WORLDCHAIN_RPC_URL) {
+                    return 'Custom RPC';
+                }
+                
+                return 'Custom Endpoint';
+            },
+
+            // Health check for a specific provider
+            async checkProviderHealth(index) {
+                if (index >= this.providers.length) return false;
+                
+                const startTime = Date.now();
+                try {
+                    const provider = this.providers[index];
+                    await provider.getBlockNumber();
+                    
+                    const responseTime = Date.now() - startTime;
+                    this.healthChecks[index] = {
+                        isHealthy: true,
+                        lastCheck: Date.now(),
+                        consecutiveFailures: 0,
+                        responseTime: responseTime
+                    };
+                    
+                    return true;
+                } catch (error) {
+                    const health = this.healthChecks[index];
+                    health.isHealthy = false;
+                    health.lastCheck = Date.now();
+                    health.consecutiveFailures++;
+                    health.responseTime = 0;
+                    
+                    return false;
+                }
+            },
+
+            // Perform health check on all providers
+            async performHealthCheck() {
+                const now = Date.now();
+                if (now - this.lastHealthCheck < this.healthCheckInterval) {
+                    return; // Skip if too recent
+                }
+                
+                this.lastHealthCheck = now;
+                console.log('🔍 Performing RPC health check...');
+                
+                const healthPromises = this.providers.map((_, index) => 
+                    this.checkProviderHealth(index)
+                );
+                
+                const results = await Promise.allSettled(healthPromises);
+                
+                // Find the healthiest provider
+                let bestIndex = this.currentIndex;
+                let bestHealth = this.healthChecks[this.currentIndex];
+                
+                for (let i = 0; i < this.providers.length; i++) {
+                    const health = this.healthChecks[i];
+                    if (health.isHealthy && health.consecutiveFailures === 0) {
+                        if (!bestHealth.isHealthy || health.responseTime < bestHealth.responseTime) {
+                            bestIndex = i;
+                            bestHealth = health;
+                        }
+                    }
+                }
+                
+                // Switch to better provider if found
+                if (bestIndex !== this.currentIndex) {
+                    console.log(`🔄 Switching RPC from ${this.getEndpointDisplay(this.endpoints[this.currentIndex])} to ${this.getEndpointDisplay(this.endpoints[bestIndex])}`);
+                    this.currentIndex = bestIndex;
+                }
+                
+                // Log health status
+                this.logHealthStatus();
+            },
+
+            // Log current health status
+            logHealthStatus() {
+                console.log('📊 RPC Health Status:');
+                this.providers.forEach((_, index) => {
+                    const health = this.healthChecks[index];
+                    const status = health.isHealthy ? '🟢' : '🔴';
+                    const endpoint = this.getEndpointDisplay(this.endpoints[index]);
+                    const current = index === this.currentIndex ? ' (CURRENT)' : '';
+                    const responseTime = health.responseTime > 0 ? ` (${health.responseTime}ms)` : '';
+                    
+                    console.log(`   ${status} ${endpoint}${current}${responseTime}`);
+                });
+            },
+
+            // Execute RPC call with automatic fallback
+            async executeWithFallback(operation, maxRetries = this.maxRetries) {
+                let lastError;
+                
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        const provider = this.getCurrentProvider();
+                        const result = await operation(provider);
+                        return result;
+                    } catch (error) {
+                        lastError = error;
+                        console.log(`⚠️ RPC call failed on attempt ${attempt + 1}/${maxRetries}: ${error.message}`);
+                        
+                        // Mark current provider as unhealthy
+                        this.healthChecks[this.currentIndex].isHealthy = false;
+                        this.healthChecks[this.currentIndex].consecutiveFailures++;
+                        
+                        // Try to switch to next healthy provider
+                        if (!this.switchToHealthyProvider()) {
+                            console.log('❌ No healthy RPC providers available');
+                            break;
+                        }
+                        
+                        // Wait before retry
+                        if (attempt < maxRetries - 1) {
+                            await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                        }
+                    }
+                }
+                
+                throw new Error(`RPC operation failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
+            },
+
+            // Switch to next healthy provider
+            switchToHealthyProvider() {
+                const originalIndex = this.currentIndex;
+                
+                // Try next providers in order
+                for (let i = 1; i < this.providers.length; i++) {
+                    const nextIndex = (originalIndex + i) % this.providers.length;
+                    const health = this.healthChecks[nextIndex];
+                    
+                    if (health.isHealthy) {
+                        this.currentIndex = nextIndex;
+                        console.log(`🔄 Switched to ${this.getEndpointDisplay(this.endpoints[nextIndex])}`);
+                        return true;
+                    }
+                }
+                
+                // If no healthy provider found, try to reset health status and use original
+                console.log('⚠️ No healthy providers found, attempting to reset health status...');
+                this.healthChecks[originalIndex].isHealthy = true;
+                this.healthChecks[originalIndex].consecutiveFailures = 0;
+                this.currentIndex = originalIndex;
+                
+                return true;
+            },
+
+            // Get provider statistics
+            getStats() {
+                const stats = {
+                    totalProviders: this.providers.length,
+                    currentProvider: this.currentIndex,
+                    currentEndpoint: this.getEndpointDisplay(this.endpoints[this.currentIndex]),
+                    healthyProviders: 0,
+                    unhealthyProviders: 0,
+                    providers: []
+                };
+                
+                this.providers.forEach((_, index) => {
+                    const health = this.healthChecks[index];
+                    const providerInfo = {
+                        index: index,
+                        endpoint: this.getEndpointDisplay(this.endpoints[index]),
+                        isHealthy: health.isHealthy,
+                        isCurrent: index === this.currentIndex,
+                        responseTime: health.responseTime,
+                        consecutiveFailures: health.consecutiveFailures,
+                        lastCheck: health.lastCheck
+                    };
+                    
+                    stats.providers.push(providerInfo);
+                    
+                    if (health.isHealthy) {
+                        stats.healthyProviders++;
+                    } else {
+                        stats.unhealthyProviders++;
+                    }
+                });
+                
+                return stats;
+            }
+        };
+
+        // Initialize the RPC manager
+        rpcManager.initialize();
+        
+        // Start periodic health checks
+        setInterval(() => {
+            rpcManager.performHealthCheck().catch(error => {
+                console.log(`❌ Health check failed: ${error.message}`);
+            });
+        }, rpcManager.healthCheckInterval);
+
+        return rpcManager;
+    }
+
+    // Update provider when RPC changes
+    updateProvider() {
+        this.provider = this.rpcManager.getCurrentProvider();
+        
+        // Update provider in all modules that use it
+        if (this.tradingEngine) {
+            this.tradingEngine.provider = this.provider;
+        }
+        if (this.sinclaveEngine) {
+            this.sinclaveEngine.provider = this.provider;
+        }
+        if (this.tokenDiscovery) {
+            this.tokenDiscovery.provider = this.provider;
+        }
+        
+        console.log(`🔄 Updated provider to: ${this.rpcManager.getCurrentEndpointDisplay()}`);
     }
     
     // Logging control methods
