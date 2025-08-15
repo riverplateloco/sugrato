@@ -124,7 +124,7 @@ class WorldchainTradingBot {
             ensAddress: null
         };
 
-        // Enhanced RPC endpoints with QuickNode as primary
+        // Enhanced RPC endpoints with QuickNode as primary (optimized for Worldchain)
         const rpcEndpoints = [
             // Primary: QuickNode endpoint (high performance, reliable)
             'https://patient-patient-waterfall.worldchain-mainnet.quiknode.pro/cea629fe80a05630338845dc1fd58f8da329b083/',
@@ -3874,7 +3874,8 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('15. 💎 Discovery Price Analysis'));
         console.log(chalk.cyan('16. 📊 Advanced Price Tracking'));
         console.log(chalk.cyan('17. ⛽ Gas Estimation'));
-        console.log(chalk.red('18. 🚪 Exit'));
+        console.log(chalk.cyan('18. 🌐 RPC Management'));
+        console.log(chalk.red('19. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -5927,6 +5928,9 @@ class WorldchainTradingBot {
                     await this.gasEstimationMenu();
                     break;
                 case '18':
+                    await this.rpcManagementMenu();
+                    break;
+                case '19':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
