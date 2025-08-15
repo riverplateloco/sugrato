@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2024 ALGORITMIT Trading Bot
+Copyright (c) 2024 ALGORITMIT Team
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,22 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-ADDITIONAL DISCLAIMER FOR TRADING SOFTWARE:
-
-This software is designed for educational and research purposes. Trading 
-cryptocurrencies and digital assets involves substantial risk of loss and 
-is not suitable for all investors. The use of this software for actual 
-trading is at your own risk. The authors and contributors of this software 
-are not responsible for any financial losses that may result from the use 
-of this software.
-
-Users are strongly advised to:
-- Start with small amounts they can afford to lose
-- Thoroughly test the software in a safe environment
-- Understand the risks involved in cryptocurrency trading
-- Comply with all applicable laws and regulations
-- Use appropriate risk management strategies
-
-By using this software, you acknowledge that you understand and accept 
-these risks and that you are solely responsible for your trading decisions.
