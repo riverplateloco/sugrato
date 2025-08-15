@@ -10,8 +10,9 @@ class PriceDatabase extends EventEmitter {
         
         // Core settings
         this.WLD_ADDRESS = '0x2cfc85d8e48f8eab294be644d9e25c3030863003';
-        this.updateInterval = 30000; // Update every 30 seconds
+        this.updateInterval = config?.priceRefreshInterval || 2000; // Update every 2 seconds (configurable)
         this.maxHistoryAge = 7 * 24 * 60 * 60 * 1000; // 7 days
+        this.config = config; // Store config for dynamic updates
         
         // File paths
         this.priceDbPath = path.join(process.cwd(), 'price-database.json');
@@ -39,6 +40,31 @@ class PriceDatabase extends EventEmitter {
     // Set logging callback
     setLoggingCallback(callback) {
         this.loggingCallback = callback;
+    }
+    
+    // Set price refresh interval dynamically
+    setPriceRefreshInterval(intervalMs) {
+        const oldInterval = this.updateInterval;
+        this.updateInterval = intervalMs;
+        
+        // Update config if available
+        if (this.config) {
+            this.config.priceRefreshInterval = intervalMs;
+        }
+        
+        // Restart monitoring with new interval if already running
+        if (this.isRunning) {
+            this.stopBackgroundMonitoring();
+            this.startBackgroundMonitoring();
+        }
+        
+        this.log(`🔄 Price refresh interval updated: ${oldInterval/1000}s → ${intervalMs/1000}s`, 'info');
+        return true;
+    }
+    
+    // Get current price refresh interval
+    getPriceRefreshInterval() {
+        return this.updateInterval;
     }
     
     // Smart logging method

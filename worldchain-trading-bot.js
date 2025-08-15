@@ -114,8 +114,8 @@ class WorldchainTradingBot {
             showSuccessLogs: true     // Show success messages
         };
         
-        // Price checking interval configuration (default: 3 seconds)
-        this.priceCheckInterval = this.config.priceCheckInterval || 3000; // 3 seconds
+        // Price checking interval configuration (default: 2 seconds - improved responsiveness)
+        this.priceCheckInterval = this.config.priceCheckInterval || 2000; // 2 seconds
         
         // Gas estimation system
         this.gasEstimation = {
@@ -784,15 +784,15 @@ class WorldchainTradingBot {
             console.log('');
             console.log('🎛️  Quick Presets:');
             console.log('1. ⚡ ULTRA FAST - 1 second (maximum responsiveness)');
-            console.log('2. 🚀 FAST - 2 seconds (high responsiveness)');
-            console.log('3. ⚡ NORMAL - 3 seconds (balanced, recommended)');
+            console.log('2. 🚀 FAST - 2 seconds (high responsiveness, recommended)');
+            console.log('3. ⚡ NORMAL - 3 seconds (balanced performance)');
             console.log('4. 🐌 SLOW - 4 seconds (lower resource usage)');
             console.log('5. 🐌 VERY SLOW - 5 seconds (minimum resource usage)');
             console.log('');
             console.log('⚙️  Custom Control:');
             console.log('6. 🔧 Set Custom Interval (1-5 seconds)');
             console.log('7. 📊 View Current Settings');
-            console.log('8. 🔄 Reset to Default (3 seconds)');
+            console.log('8. 🔄 Reset to Default (2 seconds)');
             console.log('');
             console.log('0. ⬅️  Back to Main Menu');
             console.log('');
@@ -822,7 +822,7 @@ class WorldchainTradingBot {
                     this.displayPriceCheckIntervalInfo();
                     break;
                 case '8':
-                    this.setPriceCheckInterval(3000);
+                    this.setPriceCheckInterval(2000);
                     break;
                 case '0':
                     return;
@@ -893,10 +893,727 @@ class WorldchainTradingBot {
         console.log('');
         console.log('🎯 Recommendations:');
         console.log('   • 1-2 seconds: For aggressive trading and maximum responsiveness');
-        console.log('   • 3 seconds: Balanced performance (default, recommended)');
+        console.log('   • 3 seconds: Balanced performance');
         console.log('   • 4-5 seconds: For conservative trading and lower resource usage');
         console.log('');
         console.log('⚠️  Note: Lower intervals use more resources but provide faster response times');
+    }
+    
+    // Price Refresh Configuration Menu
+    async priceRefreshConfigurationMenu() {
+        while (true) {
+            console.clear();
+            console.log('🔄 PRICE REFRESH CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const currentInterval = this.priceDatabase.getPriceRefreshInterval();
+            console.log(`📊 Current Price Refresh Interval: ${currentInterval / 1000} seconds`);
+            console.log(`📊 Current Price Check Interval: ${this.priceCheckInterval / 1000} seconds`);
+            console.log('');
+            
+            console.log('🎛️  Quick Presets:');
+            console.log('1. ⚡ ULTRA FAST - 1 second (maximum responsiveness)');
+            console.log('2. 🚀 FAST - 2 seconds (high responsiveness, recommended)');
+            console.log('3. ⚡ NORMAL - 3 seconds (balanced performance)');
+            console.log('4. 🐌 SLOW - 5 seconds (lower resource usage)');
+            console.log('5. 🐌 VERY SLOW - 10 seconds (minimum resource usage)');
+            console.log('');
+            console.log('⚙️  Custom Control:');
+            console.log('6. 🔧 Set Custom Refresh Interval (1-30 seconds)');
+            console.log('7. 📊 View Current Settings & Performance');
+            console.log('8. 🔄 Reset to Default (2 seconds)');
+            console.log('9. ⚡ Sync with Price Check Interval');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    this.setPriceRefreshInterval(1000);
+                    break;
+                case '2':
+                    this.setPriceRefreshInterval(2000);
+                    break;
+                case '3':
+                    this.setPriceRefreshInterval(3000);
+                    break;
+                case '4':
+                    this.setPriceRefreshInterval(5000);
+                    break;
+                case '5':
+                    this.setPriceRefreshInterval(10000);
+                    break;
+                case '6':
+                    await this.setCustomPriceRefreshInterval();
+                    break;
+                case '7':
+                    this.displayPriceRefreshInfo();
+                    break;
+                case '8':
+                    this.setPriceRefreshInterval(2000);
+                    break;
+                case '9':
+                    this.syncPriceRefreshWithCheckInterval();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // Set price refresh interval
+    setPriceRefreshInterval(intervalMs) {
+        const oldInterval = this.priceDatabase.getPriceRefreshInterval();
+        this.priceDatabase.setPriceRefreshInterval(intervalMs);
+        
+        // Update config
+        if (!this.config.priceRefreshInterval) {
+            this.config.priceRefreshInterval = {};
+        }
+        this.config.priceRefreshInterval = intervalMs;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Price refresh interval updated!`));
+        console.log(chalk.white(`   📊 Old interval: ${oldInterval / 1000} seconds`));
+        console.log(chalk.white(`   📊 New interval: ${intervalMs / 1000} seconds`));
+        console.log(chalk.yellow(`   💡 Changes applied immediately to all price monitoring`));
+    }
+    
+    // Set custom price refresh interval
+    async setCustomPriceRefreshInterval() {
+        console.log('\n🔧 CUSTOM PRICE REFRESH INTERVAL');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log('📊 Enter the desired interval in seconds (1-30):');
+        console.log('   • 1-2 seconds = Maximum responsiveness, higher resource usage');
+        console.log('   • 3-5 seconds = High responsiveness, moderate resource usage');
+        console.log('   • 6-10 seconds = Balanced performance');
+        console.log('   • 11-30 seconds = Lower responsiveness, lower resource usage');
+        console.log('');
+        
+        const input = await this.getUserInput('Enter interval (1-30 seconds): ');
+        const interval = parseInt(input);
+        
+        if (isNaN(interval) || interval < 1 || interval > 30) {
+            console.log(chalk.red('❌ Invalid interval. Please enter a number between 1 and 30.'));
+            return;
+        }
+        
+        this.setPriceRefreshInterval(interval * 1000);
+    }
+    
+    // Display price refresh information
+    displayPriceRefreshInfo() {
+        console.log('\n📊 PRICE REFRESH CONFIGURATION INFORMATION');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const currentRefreshInterval = this.priceDatabase.getPriceRefreshInterval();
+        console.log(`🔄 Current Price Refresh Interval: ${currentRefreshInterval / 1000} seconds`);
+        console.log(`⏱️  Current Price Check Interval: ${this.priceCheckInterval / 1000} seconds`);
+        console.log('');
+        
+        const status = this.priceDatabase.getStatus();
+        console.log('📊 Current Performance:');
+        console.log(`   🪙 Tracked Tokens: ${status.trackedTokens}`);
+        console.log(`   🎯 Active Triggers: ${status.activeTriggers}`);
+        console.log(`   📈 Total Price Points: ${status.totalPricePoints}`);
+        console.log(`   💎 Tokens with Discovery Prices: ${status.tokensWithDiscoveryPrices || 0}`);
+        console.log('');
+        
+        console.log('💡 What Price Refresh affects:');
+        console.log('   • Real-time price updates for all tracked tokens');
+        console.log('   • Trigger execution responsiveness');
+        console.log('   • Price database accuracy and freshness');
+        console.log('   • Network API call frequency');
+        console.log('   • System resource usage');
+        console.log('');
+        
+        console.log('🎯 Recommendations:');
+        console.log('   • 1-2 seconds: For aggressive trading and maximum responsiveness');
+        console.log('   • 3-5 seconds: For active trading and good responsiveness');
+        console.log('   • 6-10 seconds: For moderate trading and balanced performance');
+        console.log('   • 11-30 seconds: For conservative trading and lower resource usage');
+        console.log('');
+        
+        console.log('⚠️  Important Notes:');
+        console.log('   • Lower intervals provide faster response but use more resources');
+        console.log('   • Price refresh affects all tracked tokens simultaneously');
+        console.log('   • Changes apply immediately to running price monitoring');
+        console.log('   • Discovery prices are captured at token discovery time');
+    }
+    
+    // Sync price refresh with check interval
+    syncPriceRefreshWithCheckInterval() {
+        const checkInterval = this.priceCheckInterval;
+        this.setPriceRefreshInterval(checkInterval);
+        
+        console.log(chalk.green(`✅ Price refresh synchronized with price check interval!`));
+        console.log(chalk.white(`   📊 Both intervals now set to: ${checkInterval / 1000} seconds`));
+        console.log(chalk.yellow(`   💡 This ensures consistent timing across all price operations`));
+    }
+    
+    // Discovery Price Analysis Menu
+    async discoveryPriceAnalysisMenu() {
+        while (true) {
+            console.clear();
+            console.log('💎 DISCOVERY PRICE ANALYSIS');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const status = this.priceDatabase.getStatus();
+            const tokensWithDiscoveryPrices = status.tokensWithDiscoveryPrices || 0;
+            
+            console.log(`📊 Tokens with Discovery Prices: ${tokensWithDiscoveryPrices}`);
+            console.log(`🪙 Total Tracked Tokens: ${status.trackedTokens}`);
+            console.log('');
+            
+            if (tokensWithDiscoveryPrices === 0) {
+                console.log(chalk.yellow('📭 No tokens with discovery prices found.'));
+                console.log(chalk.gray('   Add wallets and discover tokens to see price analysis.'));
+                console.log('');
+                console.log('0. ⬅️  Back to Main Menu');
+                console.log('');
+                
+                const choice = await this.getUserInput('Select option: ');
+                if (choice === '0') return;
+                continue;
+            }
+            
+            console.log('📋 Analysis Options:');
+            console.log('1. 📊 View All Discovery Prices');
+            console.log('2. 📈 Performance Since Discovery');
+            console.log('3. 🎯 Best Performing Tokens');
+            console.log('4. 📉 Worst Performing Tokens');
+            console.log('5. 💰 Portfolio Value Analysis');
+            console.log('6. 🔄 Refresh Discovery Prices');
+            console.log('7. 📋 Detailed Token Analysis');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    await this.viewAllDiscoveryPrices();
+                    break;
+                case '2':
+                    await this.viewPerformanceSinceDiscovery();
+                    break;
+                case '3':
+                    await this.viewBestPerformingTokens();
+                    break;
+                case '4':
+                    await this.viewWorstPerformingTokens();
+                    break;
+                case '5':
+                    await this.viewPortfolioValueAnalysis();
+                    break;
+                case '6':
+                    await this.refreshDiscoveryPrices();
+                    break;
+                case '7':
+                    await this.viewDetailedTokenAnalysis();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // View all discovery prices
+    async viewAllDiscoveryPrices() {
+        console.clear();
+        console.log('📊 ALL DISCOVERY PRICES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        let tokensWithPrices = 0;
+        
+        for (const tokenAddress of trackedTokens) {
+            const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+            if (discoveryInfo && discoveryInfo.discoveryPrice > 0) {
+                tokensWithPrices++;
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                const currentPrice = priceData?.currentPrice || 0;
+                const priceChange = currentPrice > 0 ? ((currentPrice - discoveryInfo.discoveryPrice) / discoveryInfo.discoveryPrice) * 100 : 0;
+                
+                console.log(chalk.cyan(`${tokensWithPrices}. ${priceData?.symbol || 'Unknown'}`));
+                console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+                console.log(chalk.green(`   💎 Discovery Price: ${discoveryInfo.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${currentPrice.toFixed(8)} WLD`));
+                console.log(chalk.yellow(`   📈 Change: ${priceChange.toFixed(2)}%`));
+                console.log(chalk.gray(`   🕒 Discovery: ${new Date(discoveryInfo.discoveryTimestamp).toLocaleString()}`));
+                console.log('');
+            }
+        }
+        
+        if (tokensWithPrices === 0) {
+            console.log(chalk.yellow('📭 No discovery prices found.'));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View performance since discovery
+    async viewPerformanceSinceDiscovery() {
+        console.clear();
+        console.log('📈 PERFORMANCE SINCE DISCOVERY');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance) {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by performance (best to worst)
+        performances.sort((a, b) => b.priceChangePercent - a.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No performance data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`📊 Found ${performances.length} tokens with performance data:`);
+        console.log('');
+        
+        performances.forEach((perf, index) => {
+            const changeColor = perf.performance === 'positive' ? chalk.green : perf.performance === 'negative' ? chalk.red : chalk.yellow;
+            const changeIcon = perf.performance === 'positive' ? '📈' : perf.performance === 'negative' ? '📉' : '➡️';
+            
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(changeColor(`   ${changeIcon} Change: ${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        // Summary statistics
+        const positiveCount = performances.filter(p => p.performance === 'positive').length;
+        const negativeCount = performances.filter(p => p.performance === 'negative').length;
+        const neutralCount = performances.filter(p => p.performance === 'neutral').length;
+        
+        console.log(chalk.white('📊 SUMMARY:'));
+        console.log(chalk.green(`   📈 Positive: ${positiveCount} tokens`));
+        console.log(chalk.red(`   📉 Negative: ${negativeCount} tokens`));
+        console.log(chalk.yellow(`   ➡️  Neutral: ${neutralCount} tokens`));
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View best performing tokens
+    async viewBestPerformingTokens() {
+        console.clear();
+        console.log('🏆 BEST PERFORMING TOKENS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance && performance.performance === 'positive') {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by best performance
+        performances.sort((a, b) => b.priceChangePercent - a.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No positive performing tokens found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🏆 Top ${Math.min(10, performances.length)} Best Performing Tokens:`);
+        console.log('');
+        
+        performances.slice(0, 10).forEach((perf, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.green(`   📈 Performance: +${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View worst performing tokens
+    async viewWorstPerformingTokens() {
+        console.clear();
+        console.log('📉 WORST PERFORMING TOKENS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance && performance.performance === 'negative') {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by worst performance (least negative first)
+        performances.sort((a, b) => a.priceChangePercent - b.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No negative performing tokens found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`📉 Top ${Math.min(10, performances.length)} Worst Performing Tokens:`);
+        console.log('');
+        
+        performances.slice(0, 10).forEach((perf, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.red(`   📉 Performance: ${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View portfolio value analysis
+    async viewPortfolioValueAnalysis() {
+        console.clear();
+        console.log('💰 PORTFOLIO VALUE ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        let totalDiscoveryValue = 0;
+        let totalCurrentValue = 0;
+        const tokenValues = [];
+        
+        // Calculate values for all wallets
+        for (const wallet of this.wallets) {
+            for (const token of wallet.tokens) {
+                if (token.discoveryPrice && token.discoveryPrice > 0) {
+                    const balance = parseFloat(token.balance) || 0;
+                    const discoveryValue = balance * token.discoveryPrice;
+                    const currentPrice = this.priceDatabase.priceData.get(token.address.toLowerCase())?.currentPrice || 0;
+                    const currentValue = balance * currentPrice;
+                    
+                    totalDiscoveryValue += discoveryValue;
+                    totalCurrentValue += currentValue;
+                    
+                    tokenValues.push({
+                        symbol: token.symbol,
+                        balance,
+                        discoveryValue,
+                        currentValue,
+                        change: currentValue - discoveryValue,
+                        changePercent: discoveryValue > 0 ? ((currentValue - discoveryValue) / discoveryValue) * 100 : 0
+                    });
+                }
+            }
+        }
+        
+        if (tokenValues.length === 0) {
+            console.log(chalk.yellow('📭 No portfolio value data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by absolute value change
+        tokenValues.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+        
+        console.log(`💰 Portfolio Summary:`);
+        console.log(chalk.white(`   💎 Total Discovery Value: ${totalDiscoveryValue.toFixed(4)} WLD`));
+        console.log(chalk.white(`   📊 Total Current Value: ${totalCurrentValue.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📈 Total Change: ${(totalCurrentValue - totalDiscoveryValue).toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Total Change %: ${totalDiscoveryValue > 0 ? ((totalCurrentValue - totalDiscoveryValue) / totalDiscoveryValue * 100).toFixed(2) : 0}%`));
+        console.log('');
+        
+        console.log(`📋 Top Value Changes:`);
+        tokenValues.slice(0, 10).forEach((token, index) => {
+            const changeColor = token.change >= 0 ? chalk.green : chalk.red;
+            const changeIcon = token.change >= 0 ? '📈' : '📉';
+            
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol}`));
+            console.log(chalk.white(`   💰 Balance: ${token.balance} ${token.symbol}`));
+            console.log(chalk.white(`   💎 Discovery Value: ${token.discoveryValue.toFixed(4)} WLD`));
+            console.log(chalk.white(`   📊 Current Value: ${token.currentValue.toFixed(4)} WLD`));
+            console.log(changeColor(`   ${changeIcon} Change: ${token.change.toFixed(4)} WLD (${token.changePercent.toFixed(2)}%)`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Refresh discovery prices
+    async refreshDiscoveryPrices() {
+        console.clear();
+        console.log('🔄 REFRESHING DISCOVERY PRICES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        console.log(chalk.yellow('⚠️  This will update discovery prices for all tracked tokens.'));
+        console.log(chalk.gray('   Note: This may take some time depending on the number of tokens.'));
+        console.log('');
+        
+        const confirm = await this.getUserInput('Continue? (y/N): ');
+        if (confirm.toLowerCase() !== 'y') {
+            console.log(chalk.yellow('❌ Operation cancelled.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        let updated = 0;
+        let failed = 0;
+        
+        console.log(chalk.cyan(`🔄 Updating discovery prices for ${trackedTokens.length} tokens...`));
+        
+        for (const tokenAddress of trackedTokens) {
+            try {
+                const priceInfo = await this.tokenDiscovery.getCurrentTokenPrice(tokenAddress);
+                if (priceInfo && priceInfo.price > 0) {
+                    const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                    if (priceData) {
+                        priceData.discoveryPrice = priceInfo.price;
+                        priceData.discoveryTimestamp = Date.now();
+                        priceData.discoveryPriceInfo = priceInfo;
+                        updated++;
+                        console.log(chalk.green(`✅ ${priceData.symbol}: ${priceInfo.price.toFixed(8)} WLD`));
+                    }
+                } else {
+                    failed++;
+                    console.log(chalk.red(`❌ Failed to get price for ${tokenAddress}`));
+                }
+            } catch (error) {
+                failed++;
+                console.log(chalk.red(`❌ Error updating ${tokenAddress}: ${error.message}`));
+            }
+        }
+        
+        console.log('');
+        console.log(chalk.green(`✅ Discovery prices refreshed!`));
+        console.log(chalk.white(`   📊 Updated: ${updated} tokens`));
+        console.log(chalk.red(`   ❌ Failed: ${failed} tokens`));
+        
+        // Save the updated data
+        this.priceDatabase.savePriceDatabase();
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View detailed token analysis
+    async viewDetailedTokenAnalysis() {
+        console.clear();
+        console.log('📋 DETAILED TOKEN ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for analysis.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log('📋 Select a token for detailed analysis:');
+        console.log('');
+        
+        const tokenList = [];
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+            
+            if (priceData) {
+                tokenList.push({
+                    address: tokenAddress,
+                    symbol: priceData.symbol,
+                    name: priceData.name,
+                    hasDiscoveryPrice: discoveryInfo && discoveryInfo.discoveryPrice > 0
+                });
+            }
+        }
+        
+        // Sort by symbol
+        tokenList.sort((a, b) => a.symbol.localeCompare(b.symbol));
+        
+        tokenList.forEach((token, index) => {
+            const discoveryIcon = token.hasDiscoveryPrice ? '💎' : '📭';
+            console.log(chalk.cyan(`${index + 1}. ${discoveryIcon} ${token.symbol} (${token.name})`));
+        });
+        
+        console.log('');
+        const choice = await this.getUserInput('Select token (or 0 to cancel): ');
+        
+        if (choice === '0') return;
+        
+        const tokenIndex = parseInt(choice) - 1;
+        if (tokenIndex < 0 || tokenIndex >= tokenList.length) {
+            console.log(chalk.red('❌ Invalid selection.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const selectedToken = tokenList[tokenIndex];
+        await this.showDetailedTokenAnalysis(selectedToken.address);
+    }
+    
+    // Show detailed analysis for a specific token
+    async showDetailedTokenAnalysis(tokenAddress) {
+        console.clear();
+        console.log('📋 DETAILED TOKEN ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+        const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+        const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+        
+        if (!priceData) {
+            console.log(chalk.red('❌ Token data not found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(chalk.cyan(`📊 ${priceData.symbol} (${priceData.name})`));
+        console.log(chalk.white(`📍 Address: ${tokenAddress}`));
+        console.log('');
+        
+        // Basic token info
+        console.log(chalk.white('📋 BASIC INFORMATION:'));
+        console.log(chalk.white(`   🪙 Symbol: ${priceData.symbol}`));
+        console.log(chalk.white(`   📝 Name: ${priceData.name}`));
+        console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+        console.log(chalk.white(`   📊 Current Price: ${priceData.currentPrice.toFixed(8)} WLD`));
+        console.log(chalk.white(`   📈 24h Change: ${priceData.priceChange24h?.toFixed(2) || 'N/A'}%`));
+        console.log('');
+        
+        // Discovery price info
+        if (discoveryInfo && discoveryInfo.discoveryPrice > 0) {
+            console.log(chalk.white('💎 DISCOVERY PRICE INFORMATION:'));
+            console.log(chalk.green(`   💎 Discovery Price: ${discoveryInfo.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🕒 Discovery Time: ${new Date(discoveryInfo.discoveryTimestamp).toLocaleString()}`));
+            console.log(chalk.white(`   📊 Source: ${discoveryInfo.discoveryPriceInfo?.source || 'Unknown'}`));
+            console.log(chalk.white(`   🎯 Confidence: ${discoveryInfo.discoveryPriceInfo?.confidence || 'Unknown'}`);
+            console.log('');
+            
+            if (performance) {
+                console.log(chalk.white('📈 PERFORMANCE SINCE DISCOVERY:'));
+                const changeColor = performance.performance === 'positive' ? chalk.green : performance.performance === 'negative' ? chalk.red : chalk.yellow;
+                const changeIcon = performance.performance === 'positive' ? '📈' : performance.performance === 'negative' ? '📉' : '➡️';
+                
+                console.log(changeColor(`   ${changeIcon} Price Change: ${performance.priceChangePercent.toFixed(2)}%`));
+                console.log(chalk.white(`   💎 Discovery Price: ${performance.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${performance.currentPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   ⏱️  Time Since Discovery: ${performance.timeSinceDiscoveryFormatted}`));
+                console.log('');
+            }
+        } else {
+            console.log(chalk.yellow('📭 No discovery price information available.'));
+            console.log('');
+        }
+        
+        // Price history
+        if (priceData.prices && priceData.prices.length > 0) {
+            console.log(chalk.white('📊 RECENT PRICE HISTORY:'));
+            const recentPrices = priceData.prices.slice(-5); // Last 5 prices
+            recentPrices.forEach((price, index) => {
+                const timeAgo = this.formatTimeAgo(price.timestamp);
+                console.log(chalk.white(`   ${index + 1}. ${price.price.toFixed(8)} WLD (${timeAgo})`));
+            });
+            console.log('');
+        }
+        
+        // Wallet holdings
+        const walletHoldings = [];
+        for (const wallet of this.wallets) {
+            const token = wallet.tokens.find(t => t.address.toLowerCase() === tokenAddress.toLowerCase());
+            if (token && parseFloat(token.balance) > 0) {
+                walletHoldings.push({
+                    wallet: wallet.name,
+                    balance: token.balance,
+                    discoveryPrice: token.discoveryPrice || 0,
+                    currentValue: parseFloat(token.balance) * priceData.currentPrice
+                });
+            }
+        }
+        
+        if (walletHoldings.length > 0) {
+            console.log(chalk.white('💰 WALLET HOLDINGS:'));
+            walletHoldings.forEach(holding => {
+                console.log(chalk.white(`   💼 ${holding.wallet}: ${holding.balance} ${priceData.symbol}`));
+                if (holding.discoveryPrice > 0) {
+                    const discoveryValue = parseFloat(holding.balance) * holding.discoveryPrice;
+                    const change = holding.currentValue - discoveryValue;
+                    const changePercent = discoveryValue > 0 ? (change / discoveryValue) * 100 : 0;
+                    const changeColor = change >= 0 ? chalk.green : chalk.red;
+                    console.log(changeColor(`      💎 Discovery Value: ${discoveryValue.toFixed(4)} WLD`));
+                    console.log(chalk.white(`      📊 Current Value: ${holding.currentValue.toFixed(4)} WLD`));
+                    console.log(changeColor(`      📈 Change: ${change.toFixed(4)} WLD (${changePercent.toFixed(2)}%)`));
+                }
+            });
+            console.log('');
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Helper method to format time ago
+    formatTimeAgo(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / (1000 * 60));
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        
+        if (days > 0) return `${days}d ago`;
+        if (hours > 0) return `${hours}h ago`;
+        if (minutes > 0) return `${minutes}m ago`;
+        return 'Just now';
     }
     
     // Gas Estimation System
@@ -2088,8 +2805,10 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('11. 🔊 Logging Control'));
         console.log(chalk.cyan('12. 🚀 Multi-Strategy Dashboard'));
         console.log(chalk.cyan('13. ⏱️  Price Check Interval'));
-        console.log(chalk.cyan('14. ⛽ Gas Estimation'));
-        console.log(chalk.red('15. 🚪 Exit'));
+        console.log(chalk.cyan('14. 🔄 Price Refresh Configuration'));
+        console.log(chalk.cyan('15. 💎 Discovery Price Analysis'));
+        console.log(chalk.cyan('16. ⛽ Gas Estimation'));
+        console.log(chalk.red('17. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -4130,9 +4849,15 @@ class WorldchainTradingBot {
                     await this.priceCheckIntervalMenu();
                     break;
                 case '14':
-                    await this.gasEstimationMenu();
+                    await this.priceRefreshConfigurationMenu();
                     break;
                 case '15':
+                    await this.discoveryPriceAnalysisMenu();
+                    break;
+                case '16':
+                    await this.gasEstimationMenu();
+                    break;
+                case '17':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
