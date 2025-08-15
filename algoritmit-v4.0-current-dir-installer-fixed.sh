@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # =============================================================================
-# ALGORITMIT SMART VOLATILITY v4.0 - CURRENT DIRECTORY INSTALLER
+# ALGORITMIT SMART VOLATILITY v4.0 - CURRENT DIRECTORY INSTALLER (FIXED)
 # =============================================================================
 # Advanced AI Trading System with Ultra-Fast Execution
 # Installs in current directory - No new users - Root compatible
 # Version: 4.0 - Enhanced for Novice Traders with Professional Features
 # =============================================================================
 
-echo "🚀 ALGORITMIT Smart Volatility v4.0 - Current Directory Installer"
-echo "=================================================================="
+echo "🚀 ALGORITMIT Smart Volatility v4.0 - Current Directory Installer (FIXED)"
+echo "========================================================================="
 echo ""
 echo "⚡ Features: Ultra-fast execution, AI trading, Current directory install"
 echo "🎯 Target: Novice traders, Easy installation, No errors"
@@ -663,29 +663,29 @@ else
     show_warning "Dependencies not found"
 fi
 
-# Test bot startup with better error handling
+# Test bot startup with improved error handling
 show_progress "Testing bot startup..."
-if timeout 10s node algoritmit-v4.0-bot.js --help > /dev/null 2>&1; then
-    show_success "Bot startup test passed"
-elif timeout 10s node algoritmit-v4.0-bot.js --version > /dev/null 2>&1; then
-    show_success "Bot startup test passed (version check)"
-elif timeout 10s node algoritmit-v4.0-bot.js > /dev/null 2>&1; then
-    show_success "Bot startup test passed (basic execution)"
+show_info "Running bot startup test..."
+
+# First, try to run the bot and capture any output
+BOT_OUTPUT=$(timeout 15s node algoritmit-v4.0-bot.js 2>&1 || true)
+
+if [[ "$BOT_OUTPUT" == *"Cannot find module"* ]]; then
+    show_error "Missing dependencies detected: $BOT_OUTPUT"
+    show_progress "Attempting to fix dependencies..."
+    npm install --silent
+    show_success "Dependencies reinstalled"
+elif [[ "$BOT_OUTPUT" == *"syntax error"* ]]; then
+    show_error "Syntax error in bot file: $BOT_OUTPUT"
+elif [[ "$BOT_OUTPUT" == *"ALGORITMIT"* ]] || [[ "$BOT_OUTPUT" == *"Trading Bot"* ]]; then
+    show_success "Bot startup test passed - bot is working correctly"
+elif [[ -z "$BOT_OUTPUT" ]]; then
+    show_warning "Bot startup test - no output (may be waiting for input)"
+    show_info "This is normal for interactive bots"
 else
-    show_warning "Bot startup test failed - checking for errors..."
-    
-    # Try to run and capture any error output
-    ERROR_OUTPUT=$(timeout 10s node algoritmit-v4.0-bot.js 2>&1 || true)
-    if [[ "$ERROR_OUTPUT" == *"Cannot find module"* ]]; then
-        show_error "Missing dependencies detected. Running npm install again..."
-        npm install --silent
-        show_success "Dependencies reinstalled"
-    elif [[ "$ERROR_OUTPUT" == *"syntax error"* ]]; then
-        show_error "Syntax error in bot file detected"
-    else
-        show_warning "Bot startup test failed (this may be normal for interactive bots)"
-        show_info "Error output: $ERROR_OUTPUT"
-    fi
+    show_warning "Bot startup test - unexpected output"
+    show_info "Bot output: $BOT_OUTPUT"
+    show_info "This may be normal for interactive bots"
 fi
 
 # =============================================================================
