@@ -5545,6 +5545,19 @@ class WorldchainTradingBot {
                 console.log(`   📉 DIP Threshold: ${strategy.dipThreshold}%`);
                 console.log(`   📈 Profit Target: ${strategy.profitTarget}%`);
                 console.log(`   💰 Trade Amount: ${strategy.tradeAmount} WLD`);
+                
+                // Display cycle information
+                if (strategy.maxCycles > 0) {
+                    console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles} completed`);
+                } else {
+                    console.log(`   🔄 Cycles: ${strategy.completedCycles || 0} completed (unlimited)`);
+                }
+                
+                // Display DCA information if enabled
+                if (strategy.dcaConfig && strategy.dcaConfig.enabled) {
+                    console.log(`   📈 DCA: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+                }
+                
                 console.log(`   📋 ID: ${strategy.id}`);
             });
         }
@@ -5767,6 +5780,34 @@ class WorldchainTradingBot {
                 return;
             }
 
+            // Trading Cycles Configuration
+            console.log('\n🔄 TRADING CYCLES CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('💡 A trading cycle is a complete buy/sell or sell/buy operation');
+            console.log('📊 Each cycle includes: Buy → Wait for profit → Sell (or Sell → Wait for dip → Buy)');
+            console.log('🛑 Strategy will automatically stop after completing the specified number of cycles');
+            console.log('');
+            console.log('📋 Cycle Examples:');
+            console.log('   • 1 cycle = Buy once, sell once, then stop');
+            console.log('   • 5 cycles = Complete 5 buy/sell operations, then stop');
+            console.log('   • 10 cycles = Complete 10 buy/sell operations, then stop');
+            console.log('   • 0 = Unlimited cycles (strategy runs until manually stopped)');
+            console.log('');
+            
+            const maxCycles = parseInt(await this.getUserInput('Maximum trading cycles (0 for unlimited, 1-50 for limited): '));
+            let cycleLimit = 0; // 0 means unlimited
+            
+            if (maxCycles === 0) {
+                cycleLimit = 0;
+                console.log('✅ Unlimited cycles enabled - strategy will run until manually stopped');
+            } else if (maxCycles >= 1 && maxCycles <= 50) {
+                cycleLimit = maxCycles;
+                console.log(`✅ Cycle limit set to ${maxCycles} - strategy will stop after ${maxCycles} complete cycles`);
+            } else {
+                console.log('❌ Invalid cycle count. Using unlimited cycles.');
+                cycleLimit = 0;
+            }
+            
             // DCA (Dollar Cost Averaging) Configuration
             console.log('\n📈 DCA (DOLLAR COST AVERAGING) CONFIGURATION');
             console.log('════════════════════════════════════════════════════════════');
@@ -5963,6 +6004,8 @@ class WorldchainTradingBot {
                 priceCheckInterval: this.priceCheckInterval, // Use configured interval
                 dipTimeframe,
                 enableHistoricalComparison,
+                // Trading Cycles Configuration
+                maxCycles: cycleLimit,
                 // Profit Range Configuration
                 enableProfitRange,
                 profitRangeMin,
@@ -5993,6 +6036,13 @@ class WorldchainTradingBot {
             console.log(`⏱️ Monitoring: Every ${this.priceCheckInterval / 1000}s, DIP detection over ${dipTimeframeLabel}`);
             console.log(`📊 Historical Analysis: ${enableHistoricalComparison ? 'ENABLED' : 'DISABLED'}`);
             
+            // Display cycle limit configuration
+            if (cycleLimit === 0) {
+                console.log(`🔄 Trading Cycles: Unlimited (run until manually stopped)`);
+            } else {
+                console.log(`🔄 Trading Cycles: ${cycleLimit} cycles (auto-stop after completion)`);
+            }
+            
             // Display DCA configuration if enabled
             if (dcaConfig.enabled) {
                 console.log(`📈 DCA Configuration: ${dcaConfig.levels} levels, ${dcaConfig.spreadRange}% spread, ${dcaConfig.positionSizeMultiplier === 0 ? 'same amount' : `${dcaConfig.positionSizeMultiplier + 1}x amount`}`);
@@ -6009,10 +6059,20 @@ class WorldchainTradingBot {
                 console.log(`   6️⃣ CONTINUE buying on additional DIPs to improve average price`);
                 console.log(`   7️⃣ NEVER buy above current average price`);
                 console.log(`   8️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+                if (cycleLimit > 0) {
+                    console.log(`   9️⃣ REPEAT for ${cycleLimit} complete cycles, then auto-stop`);
+                } else {
+                    console.log(`   9️⃣ REPEAT indefinitely until manually stopped`);
+                }
             } else {
                 console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
                 console.log(`   5️⃣ NEVER buy above current average price`);
                 console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+                if (cycleLimit > 0) {
+                    console.log(`   7️⃣ REPEAT for ${cycleLimit} complete cycles, then auto-stop`);
+                } else {
+                    console.log(`   7️⃣ REPEAT indefinitely until manually stopped`);
+                }
             }
             
             if (dipBuyingLevels.length > 0) {
@@ -6330,6 +6390,8 @@ class WorldchainTradingBot {
             console.log(`📊 Success Rate: ${(stats.successRate || 0).toFixed(1)}%`);
             console.log(`💰 Total Profit: ${(stats.totalProfit || 0).toFixed(6)} WLD`);
             console.log(`📈 Average Profit per Trade: ${(stats.averageProfitPerTrade || 0).toFixed(6)} WLD`);
+            console.log(`🔄 Total Cycles Completed: ${(stats.totalCyclesCompleted || 0)}`);
+            console.log(`📊 Average Cycles per Strategy: ${(stats.averageCyclesPerStrategy || 0).toFixed(1)}`);
             
             if (stats.bestPerformingStrategy) {
                 console.log(`\n🏆 Best Performing Strategy: ${stats.bestPerformingStrategy.name}`);
