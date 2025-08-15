@@ -23,22 +23,9 @@ class WorldchainTradingBot {
         this.walletsPath = path.join(__dirname, 'wallets.json');
         this.tokensPath = path.join(__dirname, 'discovered_tokens.json');
         
-        // Worldchain RPC endpoint (Layer 2) - Multiple endpoints for reliability
-        const rpcEndpoints = [
-            process.env.WORLDCHAIN_RPC_URL,
-            'https://worldchain-mainnet.g.alchemy.com/public',
-            'https://worldchain.drpc.org',
-            'https://worldchain-rpc.publicnode.com'
-        ].filter(Boolean);
-        
-        // Create provider with Worldchain network configuration
-        const worldchainNetwork = {
-            name: 'worldchain',
-            chainId: 480,
-            ensAddress: null
-        };
-        
-        this.provider = new ethers.JsonRpcProvider(rpcEndpoints[0], worldchainNetwork);
+        // Enhanced RPC Fallback System
+        this.rpcManager = this.initializeRPCManager();
+        this.provider = this.rpcManager.getCurrentProvider();
         
         this.config = this.loadConfig();
         this.wallets = this.loadWallets();
@@ -114,8 +101,8 @@ class WorldchainTradingBot {
             showSuccessLogs: true     // Show success messages
         };
         
-        // Price checking interval configuration (default: 3 seconds)
-        this.priceCheckInterval = this.config.priceCheckInterval || 3000; // 3 seconds
+        // Price checking interval configuration (default: 2 seconds - improved responsiveness)
+        this.priceCheckInterval = this.config.priceCheckInterval || 2000; // 2 seconds
         
         // Gas estimation system
         this.gasEstimation = {
@@ -127,6 +114,557 @@ class WorldchainTradingBot {
             testSwapResults: [],
             maxTestSwaps: 3 // Maximum test swaps to perform
         };
+    }
+
+    // Initialize RPC Manager with fallback system
+    initializeRPCManager() {
+        const worldchainNetwork = {
+            name: 'worldchain',
+            chainId: 480,
+            ensAddress: null
+        };
+
+        // Enhanced RPC endpoints with QuickNode as primary (optimized for Worldchain)
+        const rpcEndpoints = [
+            // Primary: QuickNode endpoint (high performance, reliable)
+            'https://patient-patient-waterfall.worldchain-mainnet.quiknode.pro/cea629fe80a05630338845dc1fd58f8da329b083/',
+            
+            // Secondary: Environment variable (custom endpoint)
+            process.env.WORLDCHAIN_RPC_URL,
+            
+            // Tertiary: Public endpoints (fallback)
+            'https://worldchain-mainnet.g.alchemy.com/public',
+            'https://worldchain.drpc.org',
+            'https://worldchain-rpc.publicnode.com',
+            'https://rpc.worldchain.org'
+        ].filter(Boolean);
+
+        console.log('🌐 Initializing RPC Fallback System...');
+        console.log(`   📊 Found ${rpcEndpoints.length} RPC endpoints`);
+        
+        const rpcManager = {
+            endpoints: rpcEndpoints,
+            currentIndex: 0,
+            providers: [],
+            healthChecks: {},
+            lastHealthCheck: 0,
+            healthCheckInterval: 30000, // 30 seconds
+            maxRetries: 3,
+            retryDelay: 2000, // 2 seconds
+
+            // Initialize all providers
+            initialize() {
+                this.endpoints.forEach((endpoint, index) => {
+                    try {
+                        const provider = new ethers.JsonRpcProvider(endpoint, worldchainNetwork);
+                        this.providers.push(provider);
+                        this.healthChecks[index] = {
+                            isHealthy: true,
+                            lastCheck: 0,
+                            consecutiveFailures: 0,
+                            responseTime: 0
+                        };
+                        console.log(`   ✅ Provider ${index + 1}: ${this.getEndpointDisplay(endpoint)}`);
+                    } catch (error) {
+                        console.log(`   ❌ Provider ${index + 1}: ${this.getEndpointDisplay(endpoint)} - Failed to initialize`);
+                        this.healthChecks[index] = {
+                            isHealthy: false,
+                            lastCheck: 0,
+                            consecutiveFailures: 999,
+                            responseTime: 0
+                        };
+                    }
+                });
+            },
+
+            // Get current provider
+            getCurrentProvider() {
+                if (this.providers.length === 0) {
+                    throw new Error('No RPC providers available');
+                }
+                return this.providers[this.currentIndex];
+            },
+
+            // Get current endpoint display (masked for security)
+            getCurrentEndpointDisplay() {
+                return this.getEndpointDisplay(this.endpoints[this.currentIndex]);
+            },
+
+            // Mask endpoint for display (hide API keys)
+            getEndpointDisplay(endpoint) {
+                if (!endpoint) return 'Unknown';
+                
+                // QuickNode endpoint
+                if (endpoint.includes('quiknode.pro')) {
+                    const parts = endpoint.split('/');
+                    return `QuickNode (${parts[parts.length - 2]})`;
+                }
+                
+                // Alchemy endpoint
+                if (endpoint.includes('alchemy.com')) {
+                    return 'Alchemy Public';
+                }
+                
+                // DRPC endpoint
+                if (endpoint.includes('drpc.org')) {
+                    return 'DRPC Public';
+                }
+                
+                // PublicNode endpoint
+                if (endpoint.includes('publicnode.com')) {
+                    return 'PublicNode';
+                }
+                
+                // Custom endpoint
+                if (endpoint.includes('worldchain.org')) {
+                    return 'Worldchain Official';
+                }
+                
+                // Environment variable endpoint
+                if (endpoint === process.env.WORLDCHAIN_RPC_URL) {
+                    return 'Custom RPC';
+                }
+                
+                return 'Custom Endpoint';
+            },
+
+            // Health check for a specific provider
+            async checkProviderHealth(index) {
+                if (index >= this.providers.length) return false;
+                
+                const startTime = Date.now();
+                try {
+                    const provider = this.providers[index];
+                    await provider.getBlockNumber();
+                    
+                    const responseTime = Date.now() - startTime;
+                    this.healthChecks[index] = {
+                        isHealthy: true,
+                        lastCheck: Date.now(),
+                        consecutiveFailures: 0,
+                        responseTime: responseTime
+                    };
+                    
+                    return true;
+                } catch (error) {
+                    const health = this.healthChecks[index];
+                    health.isHealthy = false;
+                    health.lastCheck = Date.now();
+                    health.consecutiveFailures++;
+                    health.responseTime = 0;
+                    
+                    return false;
+                }
+            },
+
+            // Perform health check on all providers
+            async performHealthCheck() {
+                const now = Date.now();
+                if (now - this.lastHealthCheck < this.healthCheckInterval) {
+                    return; // Skip if too recent
+                }
+                
+                this.lastHealthCheck = now;
+                console.log('🔍 Performing RPC health check...');
+                
+                const healthPromises = this.providers.map((_, index) => 
+                    this.checkProviderHealth(index)
+                );
+                
+                const results = await Promise.allSettled(healthPromises);
+                
+                // Find the healthiest provider
+                let bestIndex = this.currentIndex;
+                let bestHealth = this.healthChecks[this.currentIndex];
+                
+                for (let i = 0; i < this.providers.length; i++) {
+                    const health = this.healthChecks[i];
+                    if (health.isHealthy && health.consecutiveFailures === 0) {
+                        if (!bestHealth.isHealthy || health.responseTime < bestHealth.responseTime) {
+                            bestIndex = i;
+                            bestHealth = health;
+                        }
+                    }
+                }
+                
+                // Switch to better provider if found
+                if (bestIndex !== this.currentIndex) {
+                    console.log(`🔄 Switching RPC from ${this.getEndpointDisplay(this.endpoints[this.currentIndex])} to ${this.getEndpointDisplay(this.endpoints[bestIndex])}`);
+                    this.currentIndex = bestIndex;
+                }
+                
+                // Log health status
+                this.logHealthStatus();
+            },
+
+            // Log current health status
+            logHealthStatus() {
+                console.log('📊 RPC Health Status:');
+                this.providers.forEach((_, index) => {
+                    const health = this.healthChecks[index];
+                    const status = health.isHealthy ? '🟢' : '🔴';
+                    const endpoint = this.getEndpointDisplay(this.endpoints[index]);
+                    const current = index === this.currentIndex ? ' (CURRENT)' : '';
+                    const responseTime = health.responseTime > 0 ? ` (${health.responseTime}ms)` : '';
+                    
+                    console.log(`   ${status} ${endpoint}${current}${responseTime}`);
+                });
+            },
+
+            // Execute RPC call with automatic fallback
+            async executeWithFallback(operation, maxRetries = this.maxRetries) {
+                let lastError;
+                
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                    try {
+                        const provider = this.getCurrentProvider();
+                        const result = await operation(provider);
+                        return result;
+                    } catch (error) {
+                        lastError = error;
+                        console.log(`⚠️ RPC call failed on attempt ${attempt + 1}/${maxRetries}: ${error.message}`);
+                        
+                        // Mark current provider as unhealthy
+                        this.healthChecks[this.currentIndex].isHealthy = false;
+                        this.healthChecks[this.currentIndex].consecutiveFailures++;
+                        
+                        // Try to switch to next healthy provider
+                        if (!this.switchToHealthyProvider()) {
+                            console.log('❌ No healthy RPC providers available');
+                            break;
+                        }
+                        
+                        // Wait before retry
+                        if (attempt < maxRetries - 1) {
+                            await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+                        }
+                    }
+                }
+                
+                throw new Error(`RPC operation failed after ${maxRetries} attempts. Last error: ${lastError.message}`);
+            },
+
+            // Switch to next healthy provider
+            switchToHealthyProvider() {
+                const originalIndex = this.currentIndex;
+                
+                // Try next providers in order
+                for (let i = 1; i < this.providers.length; i++) {
+                    const nextIndex = (originalIndex + i) % this.providers.length;
+                    const health = this.healthChecks[nextIndex];
+                    
+                    if (health.isHealthy) {
+                        this.currentIndex = nextIndex;
+                        console.log(`🔄 Switched to ${this.getEndpointDisplay(this.endpoints[nextIndex])}`);
+                        return true;
+                    }
+                }
+                
+                // If no healthy provider found, try to reset health status and use original
+                console.log('⚠️ No healthy providers found, attempting to reset health status...');
+                this.healthChecks[originalIndex].isHealthy = true;
+                this.healthChecks[originalIndex].consecutiveFailures = 0;
+                this.currentIndex = originalIndex;
+                
+                return true;
+            },
+
+            // Get provider statistics
+            getStats() {
+                const stats = {
+                    totalProviders: this.providers.length,
+                    currentProvider: this.currentIndex,
+                    currentEndpoint: this.getEndpointDisplay(this.endpoints[this.currentIndex]),
+                    healthyProviders: 0,
+                    unhealthyProviders: 0,
+                    providers: []
+                };
+                
+                this.providers.forEach((_, index) => {
+                    const health = this.healthChecks[index];
+                    const providerInfo = {
+                        index: index,
+                        endpoint: this.getEndpointDisplay(this.endpoints[index]),
+                        isHealthy: health.isHealthy,
+                        isCurrent: index === this.currentIndex,
+                        responseTime: health.responseTime,
+                        consecutiveFailures: health.consecutiveFailures,
+                        lastCheck: health.lastCheck
+                    };
+                    
+                    stats.providers.push(providerInfo);
+                    
+                    if (health.isHealthy) {
+                        stats.healthyProviders++;
+                    } else {
+                        stats.unhealthyProviders++;
+                    }
+                });
+                
+                return stats;
+            }
+        };
+
+        // Initialize the RPC manager
+        rpcManager.initialize();
+        
+        // Perform initial speed test to optimize endpoint order
+        this.performInitialSpeedTest(rpcManager).then(() => {
+            console.log('✅ RPC speed test completed - endpoints optimized for performance');
+        }).catch(error => {
+            console.log(`⚠️ Speed test failed: ${error.message}`);
+        });
+        
+        // Start periodic health checks
+        setInterval(() => {
+            rpcManager.performHealthCheck().catch(error => {
+                console.log(`❌ Health check failed: ${error.message}`);
+            });
+        }, rpcManager.healthCheckInterval);
+
+        return rpcManager;
+    }
+
+    // Perform comprehensive RPC speed test
+    async performInitialSpeedTest(rpcManager) {
+        console.log('🏁 Performing RPC Speed Test...');
+        console.log('   📊 Testing all endpoints for optimal performance');
+        
+        const testResults = [];
+        const testOperations = [
+            { name: 'Block Number', operation: (provider) => provider.getBlockNumber() },
+            { name: 'Gas Price', operation: (provider) => provider.getFeeData() },
+            { name: 'Network', operation: (provider) => provider.getNetwork() }
+        ];
+        
+        // Test each provider
+        for (let i = 0; i < rpcManager.providers.length; i++) {
+            const provider = rpcManager.providers[i];
+            const endpoint = rpcManager.endpoints[i];
+            const endpointName = rpcManager.getEndpointDisplay(endpoint);
+            
+            console.log(`\n🔍 Testing: ${endpointName}`);
+            
+            const result = {
+                index: i,
+                endpoint: endpoint,
+                endpointName: endpointName,
+                isHealthy: false,
+                averageResponseTime: 0,
+                successfulTests: 0,
+                failedTests: 0,
+                testResults: []
+            };
+            
+            // Perform multiple test operations
+            for (const testOp of testOperations) {
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    const startTime = Date.now();
+                    try {
+                        await testOp.operation(provider);
+                        const responseTime = Date.now() - startTime;
+                        
+                        result.testResults.push({
+                            operation: testOp.name,
+                            attempt: attempt,
+                            responseTime: responseTime,
+                            success: true
+                        });
+                        
+                        result.successfulTests++;
+                        console.log(`   ✅ ${testOp.name} (attempt ${attempt}): ${responseTime}ms`);
+                        
+                    } catch (error) {
+                        const responseTime = Date.now() - startTime;
+                        result.testResults.push({
+                            operation: testOp.name,
+                            attempt: attempt,
+                            responseTime: responseTime,
+                            success: false,
+                            error: error.message
+                        });
+                        
+                        result.failedTests++;
+                        console.log(`   ❌ ${testOp.name} (attempt ${attempt}): Failed (${error.message})`);
+                    }
+                }
+            }
+            
+            // Calculate average response time for successful tests
+            const successfulTests = result.testResults.filter(t => t.success);
+            if (successfulTests.length > 0) {
+                result.averageResponseTime = successfulTests.reduce((sum, t) => sum + t.responseTime, 0) / successfulTests.length;
+                result.isHealthy = result.successfulTests >= 6; // At least 6 out of 9 tests must pass
+            }
+            
+            testResults.push(result);
+            
+            // Brief pause between providers
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // Sort results by performance (fastest first)
+        testResults.sort((a, b) => {
+            if (a.isHealthy !== b.isHealthy) {
+                return b.isHealthy - a.isHealthy; // Healthy providers first
+            }
+            return a.averageResponseTime - b.averageResponseTime; // Fastest first
+        });
+        
+        // Display comprehensive results
+        console.log('\n📊 RPC SPEED TEST RESULTS');
+        console.log('════════════════════════════════════════════════════════════');
+        
+        testResults.forEach((result, index) => {
+            const status = result.isHealthy ? '🟢' : '🔴';
+            const rank = index + 1;
+            const rankText = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+            
+            console.log(`${rankText} ${status} ${result.endpointName}`);
+            console.log(`   📊 Average Response Time: ${result.averageResponseTime.toFixed(0)}ms`);
+            console.log(`   ✅ Successful Tests: ${result.successfulTests}/9`);
+            console.log(`   ❌ Failed Tests: ${result.failedTests}/9`);
+            console.log(`   🏆 Performance Rank: ${rank}/${testResults.length}`);
+            
+            if (result.isHealthy) {
+                if (result.averageResponseTime < 200) {
+                    console.log(`   ⚡ Performance: EXCELLENT (< 200ms)`);
+                } else if (result.averageResponseTime < 500) {
+                    console.log(`   ⚡ Performance: GOOD (200-500ms)`);
+                } else if (result.averageResponseTime < 1000) {
+                    console.log(`   ⚡ Performance: ACCEPTABLE (500-1000ms)`);
+                } else {
+                    console.log(`   ⚡ Performance: SLOW (> 1000ms)`);
+                }
+            } else {
+                console.log(`   ⚠️ Status: UNHEALTHY (too many failures)`);
+            }
+            console.log('');
+        });
+        
+        // Optimize endpoint order based on performance
+        const healthyResults = testResults.filter(r => r.isHealthy);
+        if (healthyResults.length > 0) {
+            console.log('🔄 Optimizing endpoint order based on performance...');
+            
+            // Reorder endpoints for optimal performance
+            const optimizedEndpoints = [];
+            const optimizedProviders = [];
+            const optimizedHealthChecks = {};
+            
+            healthyResults.forEach((result, index) => {
+                optimizedEndpoints.push(result.endpoint);
+                optimizedProviders.push(rpcManager.providers[result.index]);
+                optimizedHealthChecks[index] = rpcManager.healthChecks[result.index];
+            });
+            
+            // Add unhealthy endpoints at the end
+            testResults.filter(r => !r.isHealthy).forEach(result => {
+                optimizedEndpoints.push(result.endpoint);
+                optimizedProviders.push(rpcManager.providers[result.index]);
+                optimizedHealthChecks[optimizedEndpoints.length - 1] = rpcManager.healthChecks[result.index];
+            });
+            
+            // Update RPC manager with optimized order
+            rpcManager.endpoints = optimizedEndpoints;
+            rpcManager.providers = optimizedProviders;
+            rpcManager.healthChecks = optimizedHealthChecks;
+            rpcManager.currentIndex = 0; // Start with fastest provider
+            
+            console.log(`✅ Endpoint order optimized! Fastest provider: ${rpcManager.getCurrentEndpointDisplay()}`);
+            
+            // Save speed test results to config
+            this.saveSpeedTestResults(testResults);
+        } else {
+            console.log('⚠️ No healthy endpoints found - using original order');
+        }
+        
+        return testResults;
+    }
+
+    // Save speed test results to config
+    saveSpeedTestResults(results) {
+        try {
+            const speedTestData = {
+                timestamp: Date.now(),
+                results: results.map(r => ({
+                    endpointName: r.endpointName,
+                    averageResponseTime: r.averageResponseTime,
+                    isHealthy: r.isHealthy,
+                    successfulTests: r.successfulTests,
+                    failedTests: r.failedTests,
+                    rank: results.indexOf(r) + 1
+                }))
+            };
+            
+            const configPath = path.join(__dirname, 'rpc-speed-test.json');
+            fs.writeFileSync(configPath, JSON.stringify(speedTestData, null, 2));
+        } catch (error) {
+            console.log(`⚠️ Failed to save speed test results: ${error.message}`);
+        }
+    }
+
+    // Manual RPC speed test (for testing during runtime)
+    async manualSpeedTest() {
+        console.clear();
+        console.log('🏁 MANUAL RPC SPEED TEST');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('This will test all RPC endpoints and optimize for performance.');
+        console.log('The test may take 30-60 seconds to complete.');
+        console.log('');
+        
+        const confirm = await this.getUserInput('Start speed test? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Speed test cancelled.');
+            return;
+        }
+        
+        try {
+            const results = await this.performInitialSpeedTest(this.rpcManager);
+            
+            console.log('\n🎯 SPEED TEST COMPLETE!');
+            console.log('════════════════════════════════════════════════════════════');
+            
+            const fastest = results.find(r => r.isHealthy);
+            if (fastest) {
+                console.log(`🏆 Fastest Provider: ${fastest.endpointName}`);
+                console.log(`⚡ Response Time: ${fastest.averageResponseTime.toFixed(0)}ms`);
+                console.log(`📊 Current Provider: ${this.rpcManager.getCurrentEndpointDisplay()}`);
+                
+                if (this.rpcManager.currentIndex === fastest.index) {
+                    console.log('✅ Already using the fastest provider!');
+                } else {
+                    console.log('🔄 Switching to fastest provider...');
+                    this.rpcManager.currentIndex = fastest.index;
+                    this.updateProvider();
+                }
+            } else {
+                console.log('⚠️ No healthy providers found');
+            }
+            
+        } catch (error) {
+            console.log(`❌ Speed test failed: ${error.message}`);
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+
+    // Update provider when RPC changes
+    updateProvider() {
+        this.provider = this.rpcManager.getCurrentProvider();
+        
+        // Update provider in all modules that use it
+        if (this.tradingEngine) {
+            this.tradingEngine.provider = this.provider;
+        }
+        if (this.sinclaveEngine) {
+            this.sinclaveEngine.provider = this.provider;
+        }
+        if (this.tokenDiscovery) {
+            this.tokenDiscovery.provider = this.provider;
+        }
+        
+        console.log(`🔄 Updated provider to: ${this.rpcManager.getCurrentEndpointDisplay()}`);
     }
     
     // Logging control methods
@@ -784,15 +1322,15 @@ class WorldchainTradingBot {
             console.log('');
             console.log('🎛️  Quick Presets:');
             console.log('1. ⚡ ULTRA FAST - 1 second (maximum responsiveness)');
-            console.log('2. 🚀 FAST - 2 seconds (high responsiveness)');
-            console.log('3. ⚡ NORMAL - 3 seconds (balanced, recommended)');
+            console.log('2. 🚀 FAST - 2 seconds (high responsiveness, recommended)');
+            console.log('3. ⚡ NORMAL - 3 seconds (balanced performance)');
             console.log('4. 🐌 SLOW - 4 seconds (lower resource usage)');
             console.log('5. 🐌 VERY SLOW - 5 seconds (minimum resource usage)');
             console.log('');
             console.log('⚙️  Custom Control:');
             console.log('6. 🔧 Set Custom Interval (1-5 seconds)');
             console.log('7. 📊 View Current Settings');
-            console.log('8. 🔄 Reset to Default (3 seconds)');
+            console.log('8. 🔄 Reset to Default (2 seconds)');
             console.log('');
             console.log('0. ⬅️  Back to Main Menu');
             console.log('');
@@ -822,7 +1360,7 @@ class WorldchainTradingBot {
                     this.displayPriceCheckIntervalInfo();
                     break;
                 case '8':
-                    this.setPriceCheckInterval(3000);
+                    this.setPriceCheckInterval(2000);
                     break;
                 case '0':
                     return;
@@ -893,10 +1431,1254 @@ class WorldchainTradingBot {
         console.log('');
         console.log('🎯 Recommendations:');
         console.log('   • 1-2 seconds: For aggressive trading and maximum responsiveness');
-        console.log('   • 3 seconds: Balanced performance (default, recommended)');
+        console.log('   • 3 seconds: Balanced performance');
         console.log('   • 4-5 seconds: For conservative trading and lower resource usage');
         console.log('');
         console.log('⚠️  Note: Lower intervals use more resources but provide faster response times');
+    }
+    
+    // Price Refresh Configuration Menu
+    async priceRefreshConfigurationMenu() {
+        while (true) {
+            console.clear();
+            console.log('🔄 PRICE REFRESH CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const currentInterval = this.priceDatabase.getPriceRefreshInterval();
+            console.log(`📊 Current Price Refresh Interval: ${currentInterval / 1000} seconds`);
+            console.log(`📊 Current Price Check Interval: ${this.priceCheckInterval / 1000} seconds`);
+            console.log('');
+            
+            console.log('🎛️  Quick Presets:');
+            console.log('1. ⚡ ULTRA FAST - 1 second (maximum responsiveness)');
+            console.log('2. 🚀 FAST - 2 seconds (high responsiveness, recommended)');
+            console.log('3. ⚡ NORMAL - 3 seconds (balanced performance)');
+            console.log('4. 🐌 SLOW - 5 seconds (lower resource usage)');
+            console.log('5. 🐌 VERY SLOW - 10 seconds (minimum resource usage)');
+            console.log('');
+            console.log('⚙️  Custom Control:');
+            console.log('6. 🔧 Set Custom Refresh Interval (1-30 seconds)');
+            console.log('7. 📊 View Current Settings & Performance');
+            console.log('8. 🔄 Reset to Default (2 seconds)');
+            console.log('9. ⚡ Sync with Price Check Interval');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    this.setPriceRefreshInterval(1000);
+                    break;
+                case '2':
+                    this.setPriceRefreshInterval(2000);
+                    break;
+                case '3':
+                    this.setPriceRefreshInterval(3000);
+                    break;
+                case '4':
+                    this.setPriceRefreshInterval(5000);
+                    break;
+                case '5':
+                    this.setPriceRefreshInterval(10000);
+                    break;
+                case '6':
+                    await this.setCustomPriceRefreshInterval();
+                    break;
+                case '7':
+                    this.displayPriceRefreshInfo();
+                    break;
+                case '8':
+                    this.setPriceRefreshInterval(2000);
+                    break;
+                case '9':
+                    this.syncPriceRefreshWithCheckInterval();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // Set price refresh interval
+    setPriceRefreshInterval(intervalMs) {
+        const oldInterval = this.priceDatabase.getPriceRefreshInterval();
+        this.priceDatabase.setPriceRefreshInterval(intervalMs);
+        
+        // Update config
+        if (!this.config.priceRefreshInterval) {
+            this.config.priceRefreshInterval = {};
+        }
+        this.config.priceRefreshInterval = intervalMs;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Price refresh interval updated!`));
+        console.log(chalk.white(`   📊 Old interval: ${oldInterval / 1000} seconds`));
+        console.log(chalk.white(`   📊 New interval: ${intervalMs / 1000} seconds`));
+        console.log(chalk.yellow(`   💡 Changes applied immediately to all price monitoring`));
+    }
+    
+    // Set custom price refresh interval
+    async setCustomPriceRefreshInterval() {
+        console.log('\n🔧 CUSTOM PRICE REFRESH INTERVAL');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log('📊 Enter the desired interval in seconds (1-30):');
+        console.log('   • 1-2 seconds = Maximum responsiveness, higher resource usage');
+        console.log('   • 3-5 seconds = High responsiveness, moderate resource usage');
+        console.log('   • 6-10 seconds = Balanced performance');
+        console.log('   • 11-30 seconds = Lower responsiveness, lower resource usage');
+        console.log('');
+        
+        const input = await this.getUserInput('Enter interval (1-30 seconds): ');
+        const interval = parseInt(input);
+        
+        if (isNaN(interval) || interval < 1 || interval > 30) {
+            console.log(chalk.red('❌ Invalid interval. Please enter a number between 1 and 30.'));
+            return;
+        }
+        
+        this.setPriceRefreshInterval(interval * 1000);
+    }
+    
+    // Display price refresh information
+    displayPriceRefreshInfo() {
+        console.log('\n📊 PRICE REFRESH CONFIGURATION INFORMATION');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const currentRefreshInterval = this.priceDatabase.getPriceRefreshInterval();
+        console.log(`🔄 Current Price Refresh Interval: ${currentRefreshInterval / 1000} seconds`);
+        console.log(`⏱️  Current Price Check Interval: ${this.priceCheckInterval / 1000} seconds`);
+        console.log('');
+        
+        const status = this.priceDatabase.getStatus();
+        console.log('📊 Current Performance:');
+        console.log(`   🪙 Tracked Tokens: ${status.trackedTokens}`);
+        console.log(`   🎯 Active Triggers: ${status.activeTriggers}`);
+        console.log(`   📈 Total Price Points: ${status.totalPricePoints}`);
+        console.log(`   💎 Tokens with Discovery Prices: ${status.tokensWithDiscoveryPrices || 0}`);
+        console.log('');
+        
+        console.log('💡 What Price Refresh affects:');
+        console.log('   • Real-time price updates for all tracked tokens');
+        console.log('   • Trigger execution responsiveness');
+        console.log('   • Price database accuracy and freshness');
+        console.log('   • Network API call frequency');
+        console.log('   • System resource usage');
+        console.log('');
+        
+        console.log('🎯 Recommendations:');
+        console.log('   • 1-2 seconds: For aggressive trading and maximum responsiveness');
+        console.log('   • 3-5 seconds: For active trading and good responsiveness');
+        console.log('   • 6-10 seconds: For moderate trading and balanced performance');
+        console.log('   • 11-30 seconds: For conservative trading and lower resource usage');
+        console.log('');
+        
+        console.log('⚠️  Important Notes:');
+        console.log('   • Lower intervals provide faster response but use more resources');
+        console.log('   • Price refresh affects all tracked tokens simultaneously');
+        console.log('   • Changes apply immediately to running price monitoring');
+        console.log('   • Discovery prices are captured at token discovery time');
+    }
+    
+    // Sync price refresh with check interval
+    syncPriceRefreshWithCheckInterval() {
+        const checkInterval = this.priceCheckInterval;
+        this.setPriceRefreshInterval(checkInterval);
+        
+        console.log(chalk.green(`✅ Price refresh synchronized with price check interval!`));
+        console.log(chalk.white(`   📊 Both intervals now set to: ${checkInterval / 1000} seconds`));
+        console.log(chalk.yellow(`   💡 This ensures consistent timing across all price operations`));
+    }
+    
+    // Discovery Price Analysis Menu
+    async discoveryPriceAnalysisMenu() {
+        while (true) {
+            console.clear();
+            console.log('💎 DISCOVERY PRICE ANALYSIS');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const status = this.priceDatabase.getStatus();
+            const tokensWithDiscoveryPrices = status.tokensWithDiscoveryPrices || 0;
+            
+            console.log(`📊 Tokens with Discovery Prices: ${tokensWithDiscoveryPrices}`);
+            console.log(`🪙 Total Tracked Tokens: ${status.trackedTokens}`);
+            console.log('');
+            
+            if (tokensWithDiscoveryPrices === 0) {
+                console.log(chalk.yellow('📭 No tokens with discovery prices found.'));
+                console.log(chalk.gray('   Add wallets and discover tokens to see price analysis.'));
+                console.log('');
+                console.log('0. ⬅️  Back to Main Menu');
+                console.log('');
+                
+                const choice = await this.getUserInput('Select option: ');
+                if (choice === '0') return;
+                continue;
+            }
+            
+            console.log('📋 Analysis Options:');
+            console.log('1. 📊 View All Discovery Prices');
+            console.log('2. 📈 Performance Since Discovery');
+            console.log('3. 🎯 Best Performing Tokens');
+            console.log('4. 📉 Worst Performing Tokens');
+            console.log('5. 💰 Portfolio Value Analysis');
+            console.log('6. 🔄 Refresh Discovery Prices');
+            console.log('7. 📋 Detailed Token Analysis');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    await this.viewAllDiscoveryPrices();
+                    break;
+                case '2':
+                    await this.viewPerformanceSinceDiscovery();
+                    break;
+                case '3':
+                    await this.viewBestPerformingTokens();
+                    break;
+                case '4':
+                    await this.viewWorstPerformingTokens();
+                    break;
+                case '5':
+                    await this.viewPortfolioValueAnalysis();
+                    break;
+                case '6':
+                    await this.refreshDiscoveryPrices();
+                    break;
+                case '7':
+                    await this.viewDetailedTokenAnalysis();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // View all discovery prices
+    async viewAllDiscoveryPrices() {
+        console.clear();
+        console.log('📊 ALL DISCOVERY PRICES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        let tokensWithPrices = 0;
+        
+        for (const tokenAddress of trackedTokens) {
+            const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+            if (discoveryInfo && discoveryInfo.discoveryPrice > 0) {
+                tokensWithPrices++;
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                const currentPrice = priceData?.currentPrice || 0;
+                const priceChange = currentPrice > 0 ? ((currentPrice - discoveryInfo.discoveryPrice) / discoveryInfo.discoveryPrice) * 100 : 0;
+                
+                console.log(chalk.cyan(`${tokensWithPrices}. ${priceData?.symbol || 'Unknown'}`));
+                console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+                console.log(chalk.green(`   💎 Discovery Price: ${discoveryInfo.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${currentPrice.toFixed(8)} WLD`));
+                console.log(chalk.yellow(`   📈 Change: ${priceChange.toFixed(2)}%`));
+                console.log(chalk.gray(`   🕒 Discovery: ${new Date(discoveryInfo.discoveryTimestamp).toLocaleString()}`));
+                console.log('');
+            }
+        }
+        
+        if (tokensWithPrices === 0) {
+            console.log(chalk.yellow('📭 No discovery prices found.'));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View performance since discovery
+    async viewPerformanceSinceDiscovery() {
+        console.clear();
+        console.log('📈 PERFORMANCE SINCE DISCOVERY');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance) {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by performance (best to worst)
+        performances.sort((a, b) => b.priceChangePercent - a.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No performance data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`📊 Found ${performances.length} tokens with performance data:`);
+        console.log('');
+        
+        performances.forEach((perf, index) => {
+            const changeColor = perf.performance === 'positive' ? chalk.green : perf.performance === 'negative' ? chalk.red : chalk.yellow;
+            const changeIcon = perf.performance === 'positive' ? '📈' : perf.performance === 'negative' ? '📉' : '➡️';
+            
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(changeColor(`   ${changeIcon} Change: ${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        // Summary statistics
+        const positiveCount = performances.filter(p => p.performance === 'positive').length;
+        const negativeCount = performances.filter(p => p.performance === 'negative').length;
+        const neutralCount = performances.filter(p => p.performance === 'neutral').length;
+        
+        console.log(chalk.white('📊 SUMMARY:'));
+        console.log(chalk.green(`   📈 Positive: ${positiveCount} tokens`));
+        console.log(chalk.red(`   📉 Negative: ${negativeCount} tokens`));
+        console.log(chalk.yellow(`   ➡️  Neutral: ${neutralCount} tokens`));
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View best performing tokens
+    async viewBestPerformingTokens() {
+        console.clear();
+        console.log('🏆 BEST PERFORMING TOKENS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance && performance.performance === 'positive') {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by best performance
+        performances.sort((a, b) => b.priceChangePercent - a.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No positive performing tokens found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🏆 Top ${Math.min(10, performances.length)} Best Performing Tokens:`);
+        console.log('');
+        
+        performances.slice(0, 10).forEach((perf, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.green(`   📈 Performance: +${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View worst performing tokens
+    async viewWorstPerformingTokens() {
+        console.clear();
+        console.log('📉 WORST PERFORMING TOKENS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const performances = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+            if (performance && performance.performance === 'negative') {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                performances.push({
+                    ...performance,
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress
+                });
+            }
+        }
+        
+        // Sort by worst performance (least negative first)
+        performances.sort((a, b) => a.priceChangePercent - b.priceChangePercent);
+        
+        if (performances.length === 0) {
+            console.log(chalk.yellow('📭 No negative performing tokens found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`📉 Top ${Math.min(10, performances.length)} Worst Performing Tokens:`);
+        console.log('');
+        
+        performances.slice(0, 10).forEach((perf, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${perf.symbol}`));
+            console.log(chalk.red(`   📉 Performance: ${perf.priceChangePercent.toFixed(2)}%`));
+            console.log(chalk.white(`   💎 Discovery: ${perf.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📊 Current: ${perf.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.gray(`   ⏱️  Time: ${perf.timeSinceDiscoveryFormatted}`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View portfolio value analysis
+    async viewPortfolioValueAnalysis() {
+        console.clear();
+        console.log('💰 PORTFOLIO VALUE ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        let totalDiscoveryValue = 0;
+        let totalCurrentValue = 0;
+        const tokenValues = [];
+        
+        // Calculate values for all wallets
+        for (const wallet of this.wallets) {
+            for (const token of wallet.tokens) {
+                if (token.discoveryPrice && token.discoveryPrice > 0) {
+                    const balance = parseFloat(token.balance) || 0;
+                    const discoveryValue = balance * token.discoveryPrice;
+                    const currentPrice = this.priceDatabase.priceData.get(token.address.toLowerCase())?.currentPrice || 0;
+                    const currentValue = balance * currentPrice;
+                    
+                    totalDiscoveryValue += discoveryValue;
+                    totalCurrentValue += currentValue;
+                    
+                    tokenValues.push({
+                        symbol: token.symbol,
+                        balance,
+                        discoveryValue,
+                        currentValue,
+                        change: currentValue - discoveryValue,
+                        changePercent: discoveryValue > 0 ? ((currentValue - discoveryValue) / discoveryValue) * 100 : 0
+                    });
+                }
+            }
+        }
+        
+        if (tokenValues.length === 0) {
+            console.log(chalk.yellow('📭 No portfolio value data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by absolute value change
+        tokenValues.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+        
+        console.log(`💰 Portfolio Summary:`);
+        console.log(chalk.white(`   💎 Total Discovery Value: ${totalDiscoveryValue.toFixed(4)} WLD`));
+        console.log(chalk.white(`   📊 Total Current Value: ${totalCurrentValue.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📈 Total Change: ${(totalCurrentValue - totalDiscoveryValue).toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Total Change %: ${totalDiscoveryValue > 0 ? ((totalCurrentValue - totalDiscoveryValue) / totalDiscoveryValue * 100).toFixed(2) : 0}%`));
+        console.log('');
+        
+        console.log(`📋 Top Value Changes:`);
+        tokenValues.slice(0, 10).forEach((token, index) => {
+            const changeColor = token.change >= 0 ? chalk.green : chalk.red;
+            const changeIcon = token.change >= 0 ? '📈' : '📉';
+            
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol}`));
+            console.log(chalk.white(`   💰 Balance: ${token.balance} ${token.symbol}`));
+            console.log(chalk.white(`   💎 Discovery Value: ${token.discoveryValue.toFixed(4)} WLD`));
+            console.log(chalk.white(`   📊 Current Value: ${token.currentValue.toFixed(4)} WLD`));
+            console.log(changeColor(`   ${changeIcon} Change: ${token.change.toFixed(4)} WLD (${token.changePercent.toFixed(2)}%)`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Refresh discovery prices
+    async refreshDiscoveryPrices() {
+        console.clear();
+        console.log('🔄 REFRESHING DISCOVERY PRICES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        console.log(chalk.yellow('⚠️  This will update discovery prices for all tracked tokens.'));
+        console.log(chalk.gray('   Note: This may take some time depending on the number of tokens.'));
+        console.log('');
+        
+        const confirm = await this.getUserInput('Continue? (y/N): ');
+        if (confirm.toLowerCase() !== 'y') {
+            console.log(chalk.yellow('❌ Operation cancelled.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        let updated = 0;
+        let failed = 0;
+        
+        console.log(chalk.cyan(`🔄 Updating discovery prices for ${trackedTokens.length} tokens...`));
+        
+        for (const tokenAddress of trackedTokens) {
+            try {
+                const priceInfo = await this.tokenDiscovery.getCurrentTokenPrice(tokenAddress);
+                if (priceInfo && priceInfo.price > 0) {
+                    const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                    if (priceData) {
+                        priceData.discoveryPrice = priceInfo.price;
+                        priceData.discoveryTimestamp = Date.now();
+                        priceData.discoveryPriceInfo = priceInfo;
+                        updated++;
+                        console.log(chalk.green(`✅ ${priceData.symbol}: ${priceInfo.price.toFixed(8)} WLD`));
+                    }
+                } else {
+                    failed++;
+                    console.log(chalk.red(`❌ Failed to get price for ${tokenAddress}`));
+                }
+            } catch (error) {
+                failed++;
+                console.log(chalk.red(`❌ Error updating ${tokenAddress}: ${error.message}`));
+            }
+        }
+        
+        console.log('');
+        console.log(chalk.green(`✅ Discovery prices refreshed!`));
+        console.log(chalk.white(`   📊 Updated: ${updated} tokens`));
+        console.log(chalk.red(`   ❌ Failed: ${failed} tokens`));
+        
+        // Save the updated data
+        this.priceDatabase.savePriceDatabase();
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View detailed token analysis
+    async viewDetailedTokenAnalysis() {
+        console.clear();
+        console.log('📋 DETAILED TOKEN ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for analysis.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log('📋 Select a token for detailed analysis:');
+        console.log('');
+        
+        const tokenList = [];
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+            
+            if (priceData) {
+                tokenList.push({
+                    address: tokenAddress,
+                    symbol: priceData.symbol,
+                    name: priceData.name,
+                    hasDiscoveryPrice: discoveryInfo && discoveryInfo.discoveryPrice > 0
+                });
+            }
+        }
+        
+        // Sort by symbol
+        tokenList.sort((a, b) => a.symbol.localeCompare(b.symbol));
+        
+        tokenList.forEach((token, index) => {
+            const discoveryIcon = token.hasDiscoveryPrice ? '💎' : '📭';
+            console.log(chalk.cyan(`${index + 1}. ${discoveryIcon} ${token.symbol} (${token.name})`));
+        });
+        
+        console.log('');
+        const choice = await this.getUserInput('Select token (or 0 to cancel): ');
+        
+        if (choice === '0') return;
+        
+        const tokenIndex = parseInt(choice) - 1;
+        if (tokenIndex < 0 || tokenIndex >= tokenList.length) {
+            console.log(chalk.red('❌ Invalid selection.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const selectedToken = tokenList[tokenIndex];
+        await this.showDetailedTokenAnalysis(selectedToken.address);
+    }
+    
+    // Show detailed analysis for a specific token
+    async showDetailedTokenAnalysis(tokenAddress) {
+        console.clear();
+        console.log('📋 DETAILED TOKEN ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+        const discoveryInfo = this.priceDatabase.getDiscoveryPriceInfo(tokenAddress);
+        const performance = this.priceDatabase.getPricePerformanceSinceDiscovery(tokenAddress);
+        
+        if (!priceData) {
+            console.log(chalk.red('❌ Token data not found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(chalk.cyan(`📊 ${priceData.symbol} (${priceData.name})`));
+        console.log(chalk.white(`📍 Address: ${tokenAddress}`));
+        console.log('');
+        
+        // Basic token info
+        console.log(chalk.white('📋 BASIC INFORMATION:'));
+        console.log(chalk.white(`   🪙 Symbol: ${priceData.symbol}`));
+        console.log(chalk.white(`   📝 Name: ${priceData.name}`));
+        console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+        console.log(chalk.white(`   📊 Current Price: ${priceData.currentPrice.toFixed(8)} WLD`));
+        console.log(chalk.white(`   📈 24h Change: ${priceData.priceChange24h?.toFixed(2) || 'N/A'}%`));
+        console.log('');
+        
+        // Discovery price info
+        if (discoveryInfo && discoveryInfo.discoveryPrice > 0) {
+            console.log(chalk.white('💎 DISCOVERY PRICE INFORMATION:'));
+            console.log(chalk.green(`   💎 Discovery Price: ${discoveryInfo.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🕒 Discovery Time: ${new Date(discoveryInfo.discoveryTimestamp).toLocaleString()}`));
+            console.log(chalk.white(`   📊 Source: ${discoveryInfo.discoveryPriceInfo?.source || 'Unknown'}`));
+            console.log(chalk.white(`   🎯 Confidence: ${discoveryInfo.discoveryPriceInfo?.confidence || 'Unknown'}`);
+            console.log('');
+            
+            if (performance) {
+                console.log(chalk.white('📈 PERFORMANCE SINCE DISCOVERY:'));
+                const changeColor = performance.performance === 'positive' ? chalk.green : performance.performance === 'negative' ? chalk.red : chalk.yellow;
+                const changeIcon = performance.performance === 'positive' ? '📈' : performance.performance === 'negative' ? '📉' : '➡️';
+                
+                console.log(changeColor(`   ${changeIcon} Price Change: ${performance.priceChangePercent.toFixed(2)}%`));
+                console.log(chalk.white(`   💎 Discovery Price: ${performance.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${performance.currentPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   ⏱️  Time Since Discovery: ${performance.timeSinceDiscoveryFormatted}`));
+                console.log('');
+            }
+        } else {
+            console.log(chalk.yellow('📭 No discovery price information available.'));
+            console.log('');
+        }
+        
+        // Price history
+        if (priceData.prices && priceData.prices.length > 0) {
+            console.log(chalk.white('📊 RECENT PRICE HISTORY:'));
+            const recentPrices = priceData.prices.slice(-5); // Last 5 prices
+            recentPrices.forEach((price, index) => {
+                const timeAgo = this.formatTimeAgo(price.timestamp);
+                console.log(chalk.white(`   ${index + 1}. ${price.price.toFixed(8)} WLD (${timeAgo})`));
+            });
+            console.log('');
+        }
+        
+        // Wallet holdings
+        const walletHoldings = [];
+        for (const wallet of this.wallets) {
+            const token = wallet.tokens.find(t => t.address.toLowerCase() === tokenAddress.toLowerCase());
+            if (token && parseFloat(token.balance) > 0) {
+                walletHoldings.push({
+                    wallet: wallet.name,
+                    balance: token.balance,
+                    discoveryPrice: token.discoveryPrice || 0,
+                    currentValue: parseFloat(token.balance) * priceData.currentPrice
+                });
+            }
+        }
+        
+        if (walletHoldings.length > 0) {
+            console.log(chalk.white('💰 WALLET HOLDINGS:'));
+            walletHoldings.forEach(holding => {
+                console.log(chalk.white(`   💼 ${holding.wallet}: ${holding.balance} ${priceData.symbol}`));
+                if (holding.discoveryPrice > 0) {
+                    const discoveryValue = parseFloat(holding.balance) * holding.discoveryPrice;
+                    const change = holding.currentValue - discoveryValue;
+                    const changePercent = discoveryValue > 0 ? (change / discoveryValue) * 100 : 0;
+                    const changeColor = change >= 0 ? chalk.green : chalk.red;
+                    console.log(changeColor(`      💎 Discovery Value: ${discoveryValue.toFixed(4)} WLD`));
+                    console.log(chalk.white(`      📊 Current Value: ${holding.currentValue.toFixed(4)} WLD`));
+                    console.log(changeColor(`      📈 Change: ${change.toFixed(4)} WLD (${changePercent.toFixed(2)}%)`));
+                }
+            });
+            console.log('');
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Helper method to format time ago
+    formatTimeAgo(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / (1000 * 60));
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        
+        if (days > 0) return `${days}d ago`;
+        if (hours > 0) return `${hours}h ago`;
+        if (minutes > 0) return `${minutes}m ago`;
+        return 'Just now';
+    }
+    
+    // Advanced Price Tracking Menu
+    async advancedPriceTrackingMenu() {
+        while (true) {
+            console.clear();
+            console.log('📊 ADVANCED PRICE TRACKING');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+            const tradedTokens = trackedTokens.filter(addr => {
+                const analysis = this.priceDatabase.getTradingAnalysis(addr);
+                return analysis && analysis.isTraded;
+            });
+            
+            console.log(`📊 Tracked Tokens: ${trackedTokens.length}`);
+            console.log(`🔄 Traded Tokens: ${tradedTokens.length}`);
+            console.log(`📈 Untraded Tokens: ${trackedTokens.length - tradedTokens.length}`);
+            console.log('');
+            
+            console.log('📋 Advanced Tracking Options:');
+            console.log('1. 📊 View All Token Price Analysis');
+            console.log('2. 🎯 Buy Recommendations');
+            console.log('3. 📈 Trading Performance Summary');
+            console.log('4. 💰 Profit/Loss Analysis');
+            console.log('5. 🔄 Record Manual Trade');
+            console.log('6. 📋 Detailed Token Analysis');
+            console.log('7. 🎯 Smart Buy Opportunities');
+            console.log('8. 📊 Average Price Tracking');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    await this.viewAllTokenPriceAnalysis();
+                    break;
+                case '2':
+                    await this.viewBuyRecommendations();
+                    break;
+                case '3':
+                    await this.viewTradingPerformanceSummary();
+                    break;
+                case '4':
+                    await this.viewProfitLossAnalysis();
+                    break;
+                case '5':
+                    await this.recordManualTrade();
+                    break;
+                case '6':
+                    await this.viewDetailedTokenAnalysis();
+                    break;
+                case '7':
+                    await this.viewSmartBuyOpportunities();
+                    break;
+                case '8':
+                    await this.viewAveragePriceTracking();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // View all token price analysis
+    async viewAllTokenPriceAnalysis() {
+        console.clear();
+        console.log('📊 ALL TOKEN PRICE ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for analysis.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        let tokenCount = 0;
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis) {
+                tokenCount++;
+                console.log(chalk.cyan(`${tokenCount}. ${analysis.symbol}`));
+                console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+                console.log(chalk.white(`   💎 Discovery Price: ${analysis.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${analysis.currentPrice.toFixed(8)} WLD`));
+                
+                if (analysis.isTraded) {
+                    console.log(chalk.green(`   📈 Average Price: ${analysis.averagePrice.toFixed(8)} WLD`));
+                    console.log(chalk.white(`   💰 Quantity: ${analysis.totalQuantity.toFixed(6)}`));
+                    console.log(chalk.white(`   📊 Total Value: ${analysis.totalValue.toFixed(4)} WLD`));
+                    console.log(chalk.yellow(`   🎯 Trades: ${analysis.totalBuys} buys, ${analysis.totalSells} sells`));
+                    
+                    const profitColor = analysis.totalProfit >= 0 ? chalk.green : chalk.red;
+                    console.log(profitColor(`   💰 Total Profit: ${analysis.totalProfit.toFixed(4)} WLD`));
+                } else {
+                    console.log(chalk.yellow(`   📭 Not traded yet`));
+                }
+                console.log('');
+            }
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View buy recommendations
+    async viewBuyRecommendations() {
+        console.clear();
+        console.log('🎯 BUY RECOMMENDATIONS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const recommendations = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData && priceData.currentPrice > 0) {
+                const recommendation = this.priceDatabase.getBuyRecommendation(tokenAddress, priceData.currentPrice);
+                if (recommendation) {
+                    recommendations.push(recommendation);
+                }
+            }
+        }
+        
+        // Sort by price difference percentage (best opportunities first)
+        recommendations.sort((a, b) => b.priceDifferencePercent - a.priceDifferencePercent);
+        
+        if (recommendations.length === 0) {
+            console.log(chalk.yellow('📭 No buy recommendations available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🎯 Found ${recommendations.length} tokens with buy analysis:`);
+        console.log('');
+        
+        recommendations.forEach((rec, index) => {
+            const shouldBuyColor = rec.shouldBuy ? chalk.green : chalk.red;
+            const shouldBuyIcon = rec.shouldBuy ? '✅' : '❌';
+            
+            console.log(chalk.cyan(`${index + 1}. ${shouldBuyIcon} ${rec.token}`));
+            console.log(chalk.white(`   📊 Current Price: ${rec.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🎯 Reference Price: ${rec.referencePrice.toFixed(8)} WLD`));
+            console.log(shouldBuyColor(`   📈 Price Difference: ${rec.priceDifferencePercent.toFixed(2)}%`));
+            console.log(chalk.gray(`   💡 ${rec.reason}`));
+            console.log('');
+        });
+        
+        // Summary
+        const goodBuys = recommendations.filter(r => r.shouldBuy);
+        console.log(chalk.white('📊 SUMMARY:'));
+        console.log(chalk.green(`   ✅ Good Buy Opportunities: ${goodBuys.length}`));
+        console.log(chalk.red(`   ❌ Not Recommended: ${recommendations.length - goodBuys.length}`));
+        
+        if (goodBuys.length > 0) {
+            console.log(chalk.green(`   🎯 Best Opportunity: ${goodBuys[0].token} (${goodBuys[0].priceDifferencePercent.toFixed(2)}% below reference)`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View trading performance summary
+    async viewTradingPerformanceSummary() {
+        console.clear();
+        console.log('📈 TRADING PERFORMANCE SUMMARY');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const tradedTokens = [];
+        let totalRealizedProfit = 0;
+        let totalUnrealizedProfit = 0;
+        let totalBuyValue = 0;
+        let totalSellValue = 0;
+        let totalBuys = 0;
+        let totalSells = 0;
+        
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis && analysis.isTraded) {
+                tradedTokens.push(analysis);
+                totalRealizedProfit += analysis.realizedProfit;
+                totalUnrealizedProfit += analysis.unrealizedProfit;
+                totalBuyValue += analysis.totalBuyValue;
+                totalSellValue += analysis.totalSellValue;
+                totalBuys += analysis.totalBuys;
+                totalSells += analysis.totalSells;
+            }
+        }
+        
+        if (tradedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No trading activity found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by total profit
+        tradedTokens.sort((a, b) => b.totalProfit - a.totalProfit);
+        
+        console.log(chalk.white('📊 OVERALL PERFORMANCE:'));
+        console.log(chalk.white(`   🪙 Traded Tokens: ${tradedTokens.length}`));
+        console.log(chalk.white(`   📈 Total Buys: ${totalBuys}`));
+        console.log(chalk.white(`   📉 Total Sells: ${totalSells}`));
+        console.log(chalk.white(`   💰 Total Buy Value: ${totalBuyValue.toFixed(4)} WLD`));
+        console.log(chalk.white(`   💰 Total Sell Value: ${totalSellValue.toFixed(4)} WLD`));
+        
+        const totalProfit = totalRealizedProfit + totalUnrealizedProfit;
+        const profitColor = totalProfit >= 0 ? chalk.green : chalk.red;
+        console.log(profitColor(`   💰 Total Profit: ${totalProfit.toFixed(4)} WLD`));
+        console.log(chalk.green(`   ✅ Realized Profit: ${totalRealizedProfit.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Unrealized Profit: ${totalUnrealizedProfit.toFixed(4)} WLD`));
+        
+        if (totalBuyValue > 0) {
+            const profitMargin = (totalProfit / totalBuyValue) * 100;
+            console.log(profitColor(`   📊 Profit Margin: ${profitMargin.toFixed(2)}%`));
+        }
+        console.log('');
+        
+        console.log(chalk.white('🏆 TOP PERFORMERS:'));
+        tradedTokens.slice(0, 5).forEach((token, index) => {
+            const profitColor = token.totalProfit >= 0 ? chalk.green : chalk.red;
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol}`));
+            console.log(profitColor(`   💰 Profit: ${token.totalProfit.toFixed(4)} WLD`));
+            console.log(chalk.white(`   📈 Buys: ${token.totalBuys}, Sells: ${token.totalSells}`));
+            console.log(chalk.white(`   💎 Average Price: ${token.averagePrice.toFixed(8)} WLD`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View profit/loss analysis
+    async viewProfitLossAnalysis() {
+        console.clear();
+        console.log('💰 PROFIT/LOSS ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const profitData = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis && analysis.isTraded) {
+                profitData.push({
+                    symbol: analysis.symbol,
+                    realizedProfit: analysis.realizedProfit,
+                    unrealizedProfit: analysis.unrealizedProfit,
+                    totalProfit: analysis.totalProfit,
+                    profitMargin: analysis.profitMargin,
+                    totalBuys: analysis.totalBuys,
+                    totalSells: analysis.totalSells
+                });
+            }
+        }
+        
+        if (profitData.length === 0) {
+            console.log(chalk.yellow('📭 No profit/loss data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by total profit
+        profitData.sort((a, b) => b.totalProfit - a.totalProfit);
+        
+        console.log(`💰 Profit/Loss Analysis for ${profitData.length} traded tokens:`);
+        console.log('');
+        
+        profitData.forEach((data, index) => {
+            const profitColor = data.totalProfit >= 0 ? chalk.green : chalk.red;
+            const profitIcon = data.totalProfit >= 0 ? '📈' : '📉';
+            
+            console.log(chalk.cyan(`${index + 1}. ${data.symbol}`));
+            console.log(profitColor(`   ${profitIcon} Total Profit: ${data.totalProfit.toFixed(4)} WLD`));
+            console.log(chalk.green(`   ✅ Realized: ${data.realizedProfit.toFixed(4)} WLD`));
+            console.log(chalk.yellow(`   📊 Unrealized: ${data.unrealizedProfit.toFixed(4)} WLD`));
+            console.log(profitColor(`   📊 Margin: ${data.profitMargin.toFixed(2)}%`));
+            console.log(chalk.white(`   🎯 Trades: ${data.totalBuys} buys, ${data.totalSells} sells`));
+            console.log('');
+        });
+        
+        // Summary statistics
+        const profitableTokens = profitData.filter(d => d.totalProfit > 0);
+        const losingTokens = profitData.filter(d => d.totalProfit < 0);
+        const totalRealized = profitData.reduce((sum, d) => sum + d.realizedProfit, 0);
+        const totalUnrealized = profitData.reduce((sum, d) => sum + d.unrealizedProfit, 0);
+        const totalProfit = totalRealized + totalUnrealized;
+        
+        console.log(chalk.white('📊 SUMMARY STATISTICS:'));
+        console.log(chalk.green(`   📈 Profitable Tokens: ${profitableTokens.length}`));
+        console.log(chalk.red(`   📉 Losing Tokens: ${losingTokens.length}`));
+        console.log(chalk.green(`   ✅ Total Realized Profit: ${totalRealized.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Total Unrealized Profit: ${totalUnrealized.toFixed(4)} WLD`));
+        
+        const totalProfitColor = totalProfit >= 0 ? chalk.green : chalk.red;
+        console.log(totalProfitColor(`   💰 Total Profit: ${totalProfit.toFixed(4)} WLD`));
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Record manual trade
+    async recordManualTrade() {
+        console.clear();
+        console.log('🔄 RECORD MANUAL TRADE');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for trade recording.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log('📋 Select token for trade recording:');
+        console.log('');
+        
+        const tokenList = [];
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData) {
+                tokenList.push({
+                    address: tokenAddress,
+                    symbol: priceData.symbol,
+                    name: priceData.name
+                });
+            }
+        }
+        
+        // Sort by symbol
+        tokenList.sort((a, b) => a.symbol.localeCompare(b.symbol));
+        
+        tokenList.forEach((token, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol} (${token.name})`));
+        });
+        
+        console.log('');
+        const tokenChoice = await this.getUserInput('Select token (or 0 to cancel): ');
+        
+        if (tokenChoice === '0') return;
+        
+        const tokenIndex = parseInt(tokenChoice) - 1;
+        if (tokenIndex < 0 || tokenIndex >= tokenList.length) {
+            console.log(chalk.red('❌ Invalid token selection.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const selectedToken = tokenList[tokenIndex];
+        
+        // Get trade type
+        console.log('');
+        console.log('📋 Trade Type:');
+        console.log('1. Buy');
+        console.log('2. Sell');
+        console.log('');
+        
+        const tradeTypeChoice = await this.getUserInput('Select trade type: ');
+        const tradeType = tradeTypeChoice === '1' ? 'buy' : tradeTypeChoice === '2' ? 'sell' : null;
+        
+        if (!tradeType) {
+            console.log(chalk.red('❌ Invalid trade type.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        // Get trade details
+        console.log('');
+        const price = await this.getUserInput(`Enter ${tradeType} price (WLD): `);
+        const quantity = await this.getUserInput(`Enter ${tradeType} quantity: `);
+        
+        const priceNum = parseFloat(price);
+        const quantityNum = parseFloat(quantity);
+        
+        if (isNaN(priceNum) || isNaN(quantityNum) || priceNum <= 0 || quantityNum <= 0) {
+            console.log(chalk.red('❌ Invalid price or quantity.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        // Record the trade
+        const success = this.priceDatabase.recordTrade(selectedToken.address, tradeType, priceNum, quantityNum);
+        
+        if (success) {
+            console.log(chalk.green(`✅ Trade recorded successfully!`));
+            console.log(chalk.white(`   🪙 Token: ${selectedToken.symbol}`));
+            console.log(chalk.white(`   📊 Type: ${tradeType.toUpperCase()}`));
+            console.log(chalk.white(`   💰 Price: ${priceNum.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📈 Quantity: ${quantityNum}`));
+            
+            // Show updated average price
+            const avgPrice = this.priceDatabase.getAveragePrice(selectedToken.address);
+            if (avgPrice) {
+                console.log(chalk.green(`   📊 New Average Price: ${avgPrice.averagePrice.toFixed(8)} WLD`));
+            }
+        } else {
+            console.log(chalk.red(`❌ Failed to record trade.`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View smart buy opportunities
+    async viewSmartBuyOpportunities() {
+        console.clear();
+        console.log('🎯 SMART BUY OPPORTUNITIES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const opportunities = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData && priceData.currentPrice > 0) {
+                const isGoodBuy = this.priceDatabase.isGoodBuyPrice(tokenAddress, priceData.currentPrice);
+                if (isGoodBuy) {
+                    const recommendation = this.priceDatabase.getBuyRecommendation(tokenAddress, priceData.currentPrice);
+                    if (recommendation) {
+                        opportunities.push({
+                            ...recommendation,
+                            address: tokenAddress
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Sort by price difference percentage (best opportunities first)
+        opportunities.sort((a, b) => b.priceDifferencePercent - a.priceDifferencePercent);
+        
+        if (opportunities.length === 0) {
+            console.log(chalk.yellow('📭 No smart buy opportunities found.'));
+            console.log(chalk.gray('   All current prices are above reference prices.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🎯 Found ${opportunities.length} smart buy opportunities:`);
+        console.log('');
+        
+        opportunities.forEach((opp, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${opp.token}`));
+            console.log(chalk.white(`   📊 Current Price: ${opp.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🎯 Reference Price: ${opp.referencePrice.toFixed(8)} WLD`));
+            console.log(chalk.green(`   📈 Opportunity: ${opp.priceDifferencePercent.toFixed(2)}% below reference`));
+            console.log(chalk.gray(`   💡 ${opp.reason}`));
+            console.log('');
+        });
+        
+        // Summary
+        console.log(chalk.white('📊 OPPORTUNITY SUMMARY:'));
+        console.log(chalk.green(`   🎯 Total Opportunities: ${opportunities.length}`));
+        if (opportunities.length > 0) {
+            console.log(chalk.green(`   🏆 Best Opportunity: ${opportunities[0].token} (${opportunities[0].priceDifferencePercent.toFixed(2)}% below reference)`));
+            console.log(chalk.green(`   📊 Average Opportunity: ${(opportunities.reduce((sum, opp) => sum + opp.priceDifferencePercent, 0) / opportunities.length).toFixed(2)}% below reference`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View average price tracking
+    async viewAveragePriceTracking() {
+        console.clear();
+        console.log('📊 AVERAGE PRICE TRACKING');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const averagePriceData = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const avgPrice = this.priceDatabase.getAveragePrice(tokenAddress);
+            if (avgPrice) {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                averagePriceData.push({
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress,
+                    ...avgPrice
+                });
+            }
+        }
+        
+        if (averagePriceData.length === 0) {
+            console.log(chalk.yellow('📭 No average price data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by average price (lowest first)
+        averagePriceData.sort((a, b) => a.averagePrice - b.averagePrice);
+        
+        console.log(`📊 Average Price Tracking for ${averagePriceData.length} tokens:`);
+        console.log('');
+        
+        averagePriceData.forEach((data, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${data.symbol}`));
+            console.log(chalk.white(`   💎 Discovery Price: ${data.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.green(`   📊 Average Price: ${data.averagePrice.toFixed(8)} WLD`));
+            
+            if (data.isTraded) {
+                console.log(chalk.white(`   💰 Quantity: ${data.totalQuantity.toFixed(6)}`));
+                console.log(chalk.white(`   📈 Total Value: ${data.totalValue.toFixed(4)} WLD`));
+                console.log(chalk.yellow(`   🎯 Best Buy: ${data.bestBuyPrice.toFixed(8)} WLD`));
+                if (data.worstSellPrice > 0) {
+                    console.log(chalk.yellow(`   📉 Worst Sell: ${data.worstSellPrice.toFixed(8)} WLD`));
+                }
+                console.log(chalk.white(`   📊 Last Trade: ${data.lastTradeType?.toUpperCase()} @ ${data.lastTradePrice.toFixed(8)} WLD`));
+            } else {
+                console.log(chalk.yellow(`   📭 Not traded yet`));
+            }
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
     }
     
     // Gas Estimation System
@@ -1830,11 +3612,11 @@ class WorldchainTradingBot {
         console.log('   • Set priority fee to 0.001 gwei');
     }
     
-    // Automatic token discovery for new wallets
+    // Automatic token discovery for new wallets with price capture
     async performAutomaticTokenDiscovery(walletData) {
         try {
-            console.log(chalk.cyan('🔍 Starting automatic token discovery...'));
-            console.log(chalk.gray('This will scan the wallet for all available tokens'));
+            console.log(chalk.cyan('🔍 Starting automatic token discovery with price capture...'));
+            console.log(chalk.gray('This will scan the wallet for all available tokens and capture current prices'));
             
             // Check ETH balance first
             const ethBalance = await this.provider.getBalance(walletData.address);
@@ -1844,49 +3626,79 @@ class WorldchainTradingBot {
                 console.log(chalk.yellow('⚠️  Wallet has no ETH balance - token discovery may be limited'));
             }
             
-            // Discover tokens using the token discovery service
-            console.log(chalk.cyan('🔍 Scanning for tokens...'));
-            const discoveredTokens = await this.tokenDiscovery.discoverTokens(walletData.address);
+            // Discover tokens with price capture using the enhanced token discovery service
+            console.log(chalk.cyan('🔍 Scanning for tokens and capturing discovery prices...'));
+            const discoveredTokens = await this.tokenDiscovery.discoverTokensWithPrices(walletData.address, {
+                captureDiscoveryPrices: true,
+                includeZeroBalances: false,
+                maxTokens: 50
+            });
             
-            if (discoveredTokens && Object.keys(discoveredTokens).length > 0) {
-                const tokenCount = Object.keys(discoveredTokens).length;
-                console.log(chalk.green(`✅ Discovered ${tokenCount} tokens!`));
+            if (discoveredTokens && discoveredTokens.length > 0) {
+                const tokenCount = discoveredTokens.length;
+                console.log(chalk.green(`✅ Discovered ${tokenCount} tokens with price capture!`));
                 
-                // Update wallet with discovered tokens
-                walletData.tokens = Object.entries(discoveredTokens).map(([address, tokenInfo]) => ({
-                    address: address,
+                // Update wallet with discovered tokens (enhanced with price data)
+                walletData.tokens = discoveredTokens.map(tokenInfo => ({
+                    address: tokenInfo.address,
                     symbol: tokenInfo.symbol || 'UNKNOWN',
                     name: tokenInfo.name || 'Unknown Token',
                     decimals: tokenInfo.decimals || 18,
                     balance: tokenInfo.balance || '0',
-                    discovered: new Date().toISOString()
+                    discovered: tokenInfo.discoveryDate || new Date().toISOString(),
+                    discoveryPrice: tokenInfo.discoveryPrice || 0,
+                    discoveryPriceInfo: tokenInfo.discoveryPriceInfo || null,
+                    baselineAveragePrice: tokenInfo.baselineAveragePrice || 0,
+                    priceHistory: tokenInfo.priceHistory || []
                 }));
                 
                 // Save updated wallet data
                 this.saveWallets();
                 
-                // Display discovered tokens
-                console.log(chalk.white('\n📋 DISCOVERED TOKENS:'));
+                // Display discovered tokens with discovery prices
+                console.log(chalk.white('\n📋 DISCOVERED TOKENS WITH DISCOVERY PRICES:'));
                 walletData.tokens.forEach((token, index) => {
                     console.log(chalk.cyan(`${index + 1}. ${token.symbol} (${token.name})`));
                     console.log(chalk.white(`   📍 Address: ${token.address}`));
                     console.log(chalk.white(`   💰 Balance: ${token.balance} ${token.symbol}`));
                     console.log(chalk.white(`   🔢 Decimals: ${token.decimals}`));
+                    
+                    // Display discovery price information
+                    if (token.discoveryPrice && token.discoveryPrice > 0) {
+                        const priceSource = token.discoveryPriceInfo?.source || 'unknown';
+                        const confidence = token.discoveryPriceInfo?.confidence || 'unknown';
+                        console.log(chalk.green(`   💎 Discovery Price: ${token.discoveryPrice.toFixed(8)} WLD`));
+                        console.log(chalk.gray(`   📊 Source: ${priceSource} (${confidence} confidence)`));
+                        console.log(chalk.yellow(`   🎯 Baseline Average: ${token.baselineAveragePrice.toFixed(8)} WLD`));
+                    } else {
+                        console.log(chalk.red(`   ❌ No discovery price available`));
+                    }
                 });
                 
-                // Add discovered tokens to global discovered tokens list
-                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
-                    this.discoveredTokens[address] = tokenInfo;
+                // Add discovered tokens to global discovered tokens list (with price data)
+                for (const tokenInfo of discoveredTokens) {
+                    this.discoveredTokens[tokenInfo.address] = {
+                        ...tokenInfo,
+                        discoveryPrice: tokenInfo.discoveryPrice,
+                        discoveryPriceInfo: tokenInfo.discoveryPriceInfo,
+                        baselineAveragePrice: tokenInfo.baselineAveragePrice,
+                        priceHistory: tokenInfo.priceHistory
+                    };
                 }
                 this.saveDiscoveredTokens();
                 
-                // Add tokens to price database for monitoring
-                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
-                    this.priceDatabase.addToken(address, tokenInfo);
+                // Add tokens to price database for monitoring (with baseline price)
+                for (const tokenInfo of discoveredTokens) {
+                    this.priceDatabase.addToken(tokenInfo.address, {
+                        ...tokenInfo,
+                        baselinePrice: tokenInfo.baselineAveragePrice,
+                        discoveryTimestamp: tokenInfo.discoveryDate
+                    });
                 }
                 
-                console.log(chalk.green('\n✅ Token discovery completed successfully!'));
+                console.log(chalk.green('\n✅ Token discovery with price capture completed successfully!'));
                 console.log(chalk.yellow('💡 All discovered tokens have been added to price monitoring'));
+                console.log(chalk.cyan('🎯 Discovery prices set as baseline average prices for trading strategies'));
                 
             } else {
                 console.log(chalk.yellow('📭 No tokens discovered in this wallet'));
@@ -2058,8 +3870,12 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('11. 🔊 Logging Control'));
         console.log(chalk.cyan('12. 🚀 Multi-Strategy Dashboard'));
         console.log(chalk.cyan('13. ⏱️  Price Check Interval'));
-        console.log(chalk.cyan('14. ⛽ Gas Estimation'));
-        console.log(chalk.red('15. 🚪 Exit'));
+        console.log(chalk.cyan('14. 🔄 Price Refresh Configuration'));
+        console.log(chalk.cyan('15. 💎 Discovery Price Analysis'));
+        console.log(chalk.cyan('16. 📊 Advanced Price Tracking'));
+        console.log(chalk.cyan('17. ⛽ Gas Estimation'));
+        console.log(chalk.cyan('18. 🌐 RPC Management'));
+        console.log(chalk.red('19. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -4100,9 +5916,21 @@ class WorldchainTradingBot {
                     await this.priceCheckIntervalMenu();
                     break;
                 case '14':
-                    await this.gasEstimationMenu();
+                    await this.priceRefreshConfigurationMenu();
                     break;
                 case '15':
+                    await this.discoveryPriceAnalysisMenu();
+                    break;
+                case '16':
+                    await this.advancedPriceTrackingMenu();
+                    break;
+                case '17':
+                    await this.gasEstimationMenu();
+                    break;
+                case '18':
+                    await this.rpcManagementMenu();
+                    break;
+                case '19':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
@@ -4197,11 +6025,14 @@ class WorldchainTradingBot {
             console.log('1. 📋 View All Custom Strategies');
             console.log('2. ➕ Create New Strategy');
             console.log('3. ▶️  Start Strategy');
-            console.log('4. ⏹️  Stop Strategy');
-            console.log('5. 🗑️  Delete Strategy');
-                    console.log('6. 📊 Strategy Statistics');
-        console.log('7. ⚡ Quick Console Commands');
-        console.log('8. 🔙 Back to Main Menu');
+            console.log('4. 🚀 Start All Strategies');
+            console.log('5. ⏹️  Stop Strategy');
+            console.log('6. 🛑 Stop All Strategies');
+            console.log('7. 🗑️  Delete Strategy');
+            console.log('8. 📊 Strategy Statistics');
+            console.log('9. 📈 Multi-Strategy Dashboard');
+            console.log('10. ⚡ Quick Console Commands');
+            console.log('11. 🔙 Back to Main Menu');
         console.log('────────────────────────────────────────────────────────────');
 
             const choice = await this.getUserInput('Select option: ');
@@ -4217,18 +6048,27 @@ class WorldchainTradingBot {
                     await this.startCustomStrategy();
                     break;
                 case '4':
-                    await this.stopCustomStrategy();
+                    await this.startAllStrategies();
                     break;
                 case '5':
-                    await this.deleteCustomStrategy();
+                    await this.stopCustomStrategy();
                     break;
                 case '6':
-                    await this.viewStrategyStatistics();
+                    await this.stopAllStrategies();
                     break;
                 case '7':
-                    await this.quickConsoleCommands();
+                    await this.deleteCustomStrategy();
                     break;
                 case '8':
+                    await this.viewStrategyStatistics();
+                    break;
+                case '9':
+                    await this.multiStrategyDashboard();
+                    break;
+                case '10':
+                    await this.quickConsoleCommands();
+                    break;
+                case '11':
                     return;
                 default:
                     console.log('❌ Invalid option. Please try again.');
@@ -4259,6 +6099,19 @@ class WorldchainTradingBot {
                 console.log(`   📉 DIP Threshold: ${strategy.dipThreshold}%`);
                 console.log(`   📈 Profit Target: ${strategy.profitTarget}%`);
                 console.log(`   💰 Trade Amount: ${strategy.tradeAmount} WLD`);
+                
+                // Display cycle information
+                if (strategy.maxCycles > 0) {
+                    console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles} completed`);
+                } else {
+                    console.log(`   🔄 Cycles: ${strategy.completedCycles || 0} completed (unlimited)`);
+                }
+                
+                // Display DCA information if enabled
+                if (strategy.dcaConfig && strategy.dcaConfig.enabled) {
+                    console.log(`   📈 DCA: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+                }
+                
                 console.log(`   📋 ID: ${strategy.id}`);
             });
         }
@@ -4481,8 +6334,141 @@ class WorldchainTradingBot {
                 return;
             }
 
-            // Configure DIP buying levels
-            console.log('\n🚀 ENHANCED DIP BUYING SYSTEM');
+            // Trading Cycles Configuration
+            console.log('\n🔄 TRADING CYCLES CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('💡 A trading cycle is a complete buy/sell or sell/buy operation');
+            console.log('📊 Each cycle includes: Buy → Wait for profit → Sell (or Sell → Wait for dip → Buy)');
+            console.log('🛑 Strategy will automatically stop after completing the specified number of cycles');
+            console.log('');
+            console.log('📋 Cycle Examples:');
+            console.log('   • 1 cycle = Buy once, sell once, then stop');
+            console.log('   • 5 cycles = Complete 5 buy/sell operations, then stop');
+            console.log('   • 10 cycles = Complete 10 buy/sell operations, then stop');
+            console.log('   • 0 = Unlimited cycles (strategy runs until manually stopped)');
+            console.log('');
+            
+            const maxCycles = parseInt(await this.getUserInput('Maximum trading cycles (0 for unlimited, 1-50 for limited): '));
+            let cycleLimit = 0; // 0 means unlimited
+            
+            if (maxCycles === 0) {
+                cycleLimit = 0;
+                console.log('✅ Unlimited cycles enabled - strategy will run until manually stopped');
+            } else if (maxCycles >= 1 && maxCycles <= 50) {
+                cycleLimit = maxCycles;
+                console.log(`✅ Cycle limit set to ${maxCycles} - strategy will stop after ${maxCycles} complete cycles`);
+            } else {
+                console.log('❌ Invalid cycle count. Using unlimited cycles.');
+                cycleLimit = 0;
+            }
+            
+            // DCA (Dollar Cost Averaging) Configuration
+            console.log('\n📈 DCA (DOLLAR COST AVERAGING) CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('💡 DCA automatically buys more tokens at progressively better prices');
+            console.log('📉 Each DCA level triggers when price drops by the spread range');
+            console.log('💰 This improves your average entry price for better profits');
+            console.log('');
+            
+            const enableDCA = await this.getUserInput('Enable DCA (Dollar Cost Averaging)? (y/N): ').toLowerCase() === 'y';
+            
+            let dcaConfig = {
+                enabled: false,
+                levels: 0,
+                spreadRange: 0,
+                positionSizeMultiplier: 0
+            };
+            
+            if (enableDCA) {
+                dcaConfig.enabled = true;
+                
+                // Number of DCA levels
+                console.log('\n📊 DCA LEVELS CONFIGURATION:');
+                console.log('💡 How many additional buy levels do you want?');
+                console.log('   • 1 level = Buy once more at better price');
+                console.log('   • 2 levels = Buy twice more at better prices');
+                console.log('   • 3 levels = Buy three times more at better prices');
+                console.log('   • 4 levels = Buy four times more at better prices');
+                console.log('   • 5 levels = Buy five times more at better prices');
+                console.log('');
+                
+                const dcaLevels = parseInt(await this.getUserInput('Number of DCA levels (1-5): '));
+                if (dcaLevels >= 1 && dcaLevels <= 5) {
+                    dcaConfig.levels = dcaLevels;
+                } else {
+                    console.log('❌ Invalid number of levels. Using 3 levels.');
+                    dcaConfig.levels = 3;
+                }
+                
+                // Spread range configuration
+                console.log('\n📉 DCA SPREAD RANGE CONFIGURATION:');
+                console.log('💡 How much should the price drop before each DCA level triggers?');
+                console.log('   • 3% = Buy every 3% price drop (aggressive)');
+                console.log('   • 5% = Buy every 5% price drop (balanced, recommended)');
+                console.log('   • 7% = Buy every 7% price drop (conservative)');
+                console.log('   • 10% = Buy every 10% price drop (very conservative)');
+                console.log('');
+                
+                const spreadRange = parseFloat(await this.getUserInput('DCA spread range % (3-10): '));
+                if (spreadRange >= 3 && spreadRange <= 10) {
+                    dcaConfig.spreadRange = spreadRange;
+                } else {
+                    console.log('❌ Invalid spread range. Using 5%.');
+                    dcaConfig.spreadRange = 5;
+                }
+                
+                // Position size multiplier configuration
+                console.log('\n💰 DCA POSITION SIZE MULTIPLIER:');
+                console.log('💡 How much more should you buy at each DCA level?');
+                console.log('   • 0 = Same amount as initial trade (no increase)');
+                console.log('   • 1 = Double the amount (2x initial trade)');
+                console.log('   • 2 = Triple the amount (3x initial trade)');
+                console.log('   • 3 = Quadruple the amount (4x initial trade)');
+                console.log('   • 4 = Five times the amount (5x initial trade)');
+                console.log('');
+                console.log(`📊 Example: If initial trade is ${tradeAmount} WLD:`);
+                console.log(`   • Level 0 (initial): ${tradeAmount} WLD`);
+                console.log(`   • Level 1 (DCA): ${tradeAmount * 2} WLD (if multiplier = 1)`);
+                console.log(`   • Level 2 (DCA): ${tradeAmount * 3} WLD (if multiplier = 2)`);
+                console.log(`   • Level 3 (DCA): ${tradeAmount * 4} WLD (if multiplier = 3)`);
+                console.log('');
+                
+                const positionMultiplier = parseInt(await this.getUserInput('Position size multiplier (0-4): '));
+                if (positionMultiplier >= 0 && positionMultiplier <= 4) {
+                    dcaConfig.positionSizeMultiplier = positionMultiplier;
+                } else {
+                    console.log('❌ Invalid multiplier. Using 1 (double amount).');
+                    dcaConfig.positionSizeMultiplier = 1;
+                }
+                
+                // Display DCA configuration summary
+                console.log('\n✅ DCA CONFIGURATION SUMMARY:');
+                console.log(`   📊 DCA Levels: ${dcaConfig.levels}`);
+                console.log(`   📉 Spread Range: ${dcaConfig.spreadRange}%`);
+                console.log(`   💰 Position Multiplier: ${dcaConfig.positionSizeMultiplier === 0 ? 'Same amount' : `${dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+                console.log('');
+                console.log(`🎯 DCA TRIGGER POINTS (example with ${dcaConfig.spreadRange}% spread):`);
+                console.log(`   • Initial Buy: At ${dipThreshold}% dip`);
+                console.log(`   • DCA Level 1: At ${dipThreshold + dcaConfig.spreadRange}% dip`);
+                console.log(`   • DCA Level 2: At ${dipThreshold + (dcaConfig.spreadRange * 2)}% dip`);
+                console.log(`   • DCA Level 3: At ${dcaConfig.levels >= 3 ? dipThreshold + (dcaConfig.spreadRange * 3) : 'N/A'}% dip`);
+                console.log(`   • DCA Level 4: At ${dcaConfig.levels >= 4 ? dipThreshold + (dcaConfig.spreadRange * 4) : 'N/A'}% dip`);
+                console.log(`   • DCA Level 5: At ${dcaConfig.levels >= 5 ? dipThreshold + (dcaConfig.spreadRange * 5) : 'N/A'}% dip`);
+                console.log('');
+                console.log(`💰 DCA BUY AMOUNTS (example with ${dcaConfig.positionSizeMultiplier === 0 ? 'same' : `${dcaConfig.positionSizeMultiplier + 1}x`} multiplier):`);
+                console.log(`   • Initial Buy: ${tradeAmount} WLD`);
+                console.log(`   • DCA Level 1: ${tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1)} WLD`);
+                console.log(`   • DCA Level 2: ${tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1)} WLD`);
+                console.log(`   • DCA Level 3: ${dcaConfig.levels >= 3 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log(`   • DCA Level 4: ${dcaConfig.levels >= 4 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log(`   • DCA Level 5: ${dcaConfig.levels >= 5 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log('');
+            } else {
+                console.log('❌ DCA disabled - will use single buy strategy');
+            }
+            
+            // Configure DIP buying levels (legacy enhanced DIP buying)
+            console.log('\n🚀 ENHANCED DIP BUYING SYSTEM (Legacy)');
             console.log('════════════════════════════════════════════════════════════');
             console.log('💡 This system allows you to buy more when prices drop further');
             console.log('📉 Each level triggers at a deeper dip with larger amounts');
@@ -4572,12 +6558,16 @@ class WorldchainTradingBot {
                 priceCheckInterval: this.priceCheckInterval, // Use configured interval
                 dipTimeframe,
                 enableHistoricalComparison,
+                // Trading Cycles Configuration
+                maxCycles: cycleLimit,
                 // Profit Range Configuration
                 enableProfitRange,
                 profitRangeMin,
                 profitRangeMax,
                 profitRangeSteps,
                 profitRangeMode,
+                // DCA Configuration
+                dcaConfig,
                 // Enhanced DIP Buying Configuration
                 dipBuyingLevels: dipBuyingLevels.length > 0 ? dipBuyingLevels : undefined
             };
@@ -4599,13 +6589,45 @@ class WorldchainTradingBot {
             console.log(`💰 Trade Amount: ${tradeAmount} WLD`);
             console.log(`⏱️ Monitoring: Every ${this.priceCheckInterval / 1000}s, DIP detection over ${dipTimeframeLabel}`);
             console.log(`📊 Historical Analysis: ${enableHistoricalComparison ? 'ENABLED' : 'DISABLED'}`);
+            
+            // Display cycle limit configuration
+            if (cycleLimit === 0) {
+                console.log(`🔄 Trading Cycles: Unlimited (run until manually stopped)`);
+            } else {
+                console.log(`🔄 Trading Cycles: ${cycleLimit} cycles (auto-stop after completion)`);
+            }
+            
+            // Display DCA configuration if enabled
+            if (dcaConfig.enabled) {
+                console.log(`📈 DCA Configuration: ${dcaConfig.levels} levels, ${dcaConfig.spreadRange}% spread, ${dcaConfig.positionSizeMultiplier === 0 ? 'same amount' : `${dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+            }
+            
             console.log(`\n🎯 AVERAGE PRICE STRATEGY BEHAVIOR:`);
             console.log(`   1️⃣ Monitor ${tokenInfo.symbol} price continuously`);
             console.log(`   2️⃣ WAIT for ${dipThreshold}% price drop (DIP)`);
             console.log(`   3️⃣ BUY ${tradeAmount} WLD → ${tokenInfo.symbol} ONLY if price ≤ average`);
-            console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
-            console.log(`   5️⃣ NEVER buy above current average price`);
-            console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+            
+            if (dcaConfig.enabled) {
+                console.log(`   4️⃣ DCA: Buy more at ${dcaConfig.spreadRange}% intervals as price drops further`);
+                console.log(`   5️⃣ DCA: Increase position size by ${dcaConfig.positionSizeMultiplier === 0 ? 'same amount' : `${dcaConfig.positionSizeMultiplier + 1}x`} at each level`);
+                console.log(`   6️⃣ CONTINUE buying on additional DIPs to improve average price`);
+                console.log(`   7️⃣ NEVER buy above current average price`);
+                console.log(`   8️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+                if (cycleLimit > 0) {
+                    console.log(`   9️⃣ REPEAT for ${cycleLimit} complete cycles, then auto-stop`);
+                } else {
+                    console.log(`   9️⃣ REPEAT indefinitely until manually stopped`);
+                }
+            } else {
+                console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
+                console.log(`   5️⃣ NEVER buy above current average price`);
+                console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+                if (cycleLimit > 0) {
+                    console.log(`   7️⃣ REPEAT for ${cycleLimit} complete cycles, then auto-stop`);
+                } else {
+                    console.log(`   7️⃣ REPEAT indefinitely until manually stopped`);
+                }
+            }
             
             if (dipBuyingLevels.length > 0) {
                 console.log(`\n🚀 ENHANCED DIP BUYING STRATEGY:`);
@@ -4710,6 +6732,116 @@ class WorldchainTradingBot {
         await this.getUserInput('\nPress Enter to continue...');
     }
 
+    // Start all custom strategies
+    async startAllStrategies() {
+        console.clear();
+        console.log('🚀 START ALL CUSTOM STRATEGIES');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const strategies = this.strategyBuilder.getAllStrategies();
+        
+        if (strategies.length === 0) {
+            console.log('📭 No custom strategies found.');
+            console.log('💡 Create strategies first to start multi-token trading.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Show all strategies and their status
+        console.log('📋 All Strategies Status:');
+        const stoppedStrategies = [];
+        
+        strategies.forEach((strategy, index) => {
+            const isActive = this.strategyBuilder.isStrategyActive(strategy.id);
+            const statusIcon = isActive ? '🟢' : '🔴';
+            const statusText = isActive ? 'ACTIVE' : 'STOPPED';
+            
+            console.log(`${index + 1}. ${statusIcon} ${strategy.name} [${statusText}]`);
+            console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+            console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+            console.log(`   💰 Amount: ${strategy.tradeAmount} WLD | 🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+            
+            if (!isActive) {
+                stoppedStrategies.push(strategy);
+            }
+        });
+
+        if (stoppedStrategies.length === 0) {
+            console.log('\n✅ All strategies are already active!');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log(`\n📊 Found ${stoppedStrategies.length} stopped strategies out of ${strategies.length} total`);
+        
+        const confirm = await this.getUserInput('Start all stopped strategies? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Operation cancelled.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Get wallet for all strategies (use the same wallet for simplicity)
+        console.log('\n💼 Wallet Selection for All Strategies:');
+        if (this.wallets.length === 0) {
+            console.log('❌ No wallets available. Add a wallet first!');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log('Available Wallets:');
+        this.wallets.forEach((wallet, index) => {
+            console.log(`${index + 1}. ${wallet.name} (${wallet.address})`);
+        });
+
+        const walletChoice = await this.getUserInput('Select wallet for all strategies (number): ');
+        const walletIndex = parseInt(walletChoice) - 1;
+        
+        if (walletIndex < 0 || walletIndex >= this.wallets.length) {
+            console.log('❌ Invalid wallet selection.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        const walletObject = this.wallets[walletIndex];
+
+        console.log(`\n🚀 Starting ${stoppedStrategies.length} strategies...`);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const strategy of stoppedStrategies) {
+            try {
+                console.log(`   ▶️ Starting: ${strategy.name} (WLD → ${strategy.targetTokenSymbol || strategy.targetToken})`);
+                this.strategyBuilder.startStrategy(strategy.id, walletObject);
+                successCount++;
+                
+                // Brief pause between starts
+                await this.sleep(500);
+                
+            } catch (error) {
+                console.error(`   ❌ Failed to start ${strategy.name}: ${error.message}`);
+                errorCount++;
+            }
+        }
+
+        console.log(`\n✅ Multi-Strategy Start Complete!`);
+        console.log(`   🟢 Successfully started: ${successCount} strategies`);
+        if (errorCount > 0) {
+            console.log(`   🔴 Failed to start: ${errorCount} strategies`);
+        }
+        
+        console.log(`\n🎯 Now monitoring ${successCount} token pairs simultaneously:`);
+        stoppedStrategies.forEach(strategy => {
+            console.log(`   📊 ${strategy.name}: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+        });
+        
+        console.log(`\n💡 Use "Multi-Strategy Dashboard" to monitor all active strategies`);
+        console.log(`   📈 Each strategy operates independently on its token pair`);
+        console.log(`   🔄 All strategies can run simultaneously without conflicts`);
+
+        await this.getUserInput('Press Enter to continue...');
+    }
+
     // Stop custom strategy
     async stopCustomStrategy() {
         console.clear();
@@ -4753,6 +6885,72 @@ class WorldchainTradingBot {
         }
 
         await this.getUserInput('\nPress Enter to continue...');
+    }
+
+    // Stop all custom strategies
+    async stopAllStrategies() {
+        console.clear();
+        console.log('🛑 STOP ALL CUSTOM STRATEGIES');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const activeStrategies = this.strategyBuilder.getAllStrategies().filter(s => 
+            this.strategyBuilder.isStrategyActive(s.id)
+        );
+        
+        if (activeStrategies.length === 0) {
+            console.log('📭 No active strategies found.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        // Show all active strategies
+        console.log('🟢 Currently Active Strategies:');
+        activeStrategies.forEach((strategy, index) => {
+            console.log(`${index + 1}. ${strategy.name}`);
+            console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+            console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+            console.log(`   💰 Amount: ${strategy.tradeAmount} WLD | 🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+        });
+
+        console.log(`\n📊 Found ${activeStrategies.length} active strategies`);
+        
+        const confirm = await this.getUserInput('Stop all active strategies? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Operation cancelled.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        console.log(`\n🛑 Stopping ${activeStrategies.length} strategies...`);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const strategy of activeStrategies) {
+            try {
+                console.log(`   ⏹️ Stopping: ${strategy.name} (WLD → ${strategy.targetTokenSymbol || strategy.targetToken})`);
+                this.strategyBuilder.stopStrategy(strategy.id);
+                successCount++;
+                
+                // Brief pause between stops
+                await this.sleep(300);
+                
+            } catch (error) {
+                console.error(`   ❌ Failed to stop ${strategy.name}: ${error.message}`);
+                errorCount++;
+            }
+        }
+
+        console.log(`\n✅ Multi-Strategy Stop Complete!`);
+        console.log(`   🟢 Successfully stopped: ${successCount} strategies`);
+        if (errorCount > 0) {
+            console.log(`   🔴 Failed to stop: ${errorCount} strategies`);
+        }
+        
+        console.log(`\n💡 All strategies have been stopped.`);
+        console.log(`   📊 You can restart individual strategies or use "Start All Strategies"`);
+        console.log(`   🔄 Strategies will resume from where they left off`);
+
+        await this.getUserInput('Press Enter to continue...');
     }
 
     // Delete custom strategy
@@ -4904,6 +7102,106 @@ class WorldchainTradingBot {
         await this.getUserInput('\nPress Enter to continue...');
     }
 
+    // Multi-Strategy Dashboard
+    async multiStrategyDashboard() {
+        console.clear();
+        console.log('📈 MULTI-STRATEGY DASHBOARD');
+        console.log('════════════════════════════════════════════════════════════');
+
+        const strategies = this.strategyBuilder.getAllStrategies();
+        
+        if (strategies.length === 0) {
+            console.log('📭 No strategies found.');
+            console.log('💡 Create strategies first to use the dashboard.');
+            await this.getUserInput('Press Enter to continue...');
+            return;
+        }
+
+        const activeStrategies = strategies.filter(s => this.strategyBuilder.isStrategyActive(s.id));
+        const stoppedStrategies = strategies.filter(s => !this.strategyBuilder.isStrategyActive(s.id));
+
+        // Overall statistics
+        console.log('📊 OVERALL STATISTICS:');
+        console.log(`   📈 Total Strategies: ${strategies.length}`);
+        console.log(`   🟢 Active Strategies: ${activeStrategies.length}`);
+        console.log(`   🔴 Stopped Strategies: ${stoppedStrategies.length}`);
+        
+        // Calculate total profit and trades
+        const totalProfit = strategies.reduce((sum, s) => sum + (s.totalProfit || 0), 0);
+        const totalTrades = strategies.reduce((sum, s) => sum + (s.totalTrades || 0), 0);
+        const totalCycles = strategies.reduce((sum, s) => sum + (s.completedCycles || 0), 0);
+        
+        console.log(`   💰 Total Profit: ${totalProfit.toFixed(6)} WLD`);
+        console.log(`   📊 Total Trades: ${totalTrades}`);
+        console.log(`   🔄 Total Cycles: ${totalCycles}`);
+        console.log('');
+
+        // Active strategies detailed view
+        if (activeStrategies.length > 0) {
+            console.log('🟢 ACTIVE STRATEGIES:');
+            console.log('─'.repeat(80));
+            
+            activeStrategies.forEach((strategy, index) => {
+                const openPositions = (strategy.positions || []).filter(p => p.status === 'open');
+                const totalWLD = openPositions.reduce((sum, pos) => sum + (pos.entryAmountWLD || 0), 0);
+                const totalTokens = openPositions.reduce((sum, pos) => sum + (pos.entryAmountToken || 0), 0);
+                
+                console.log(`${index + 1}. ${strategy.name}`);
+                console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+                console.log(`   📉 DIP: ${strategy.dipThreshold}% | 📈 Profit: ${strategy.profitTarget}%`);
+                console.log(`   💰 Trade Amount: ${strategy.tradeAmount} WLD`);
+                console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+                console.log(`   📊 Open Positions: ${openPositions.length} | 💰 Invested: ${totalWLD.toFixed(6)} WLD`);
+                console.log(`   📈 Total Trades: ${strategy.totalTrades || 0} | 💰 Profit: ${(strategy.totalProfit || 0).toFixed(6)} WLD`);
+                
+                if (strategy.dcaConfig && strategy.dcaConfig.enabled) {
+                    console.log(`   📈 DCA: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+                }
+                console.log('');
+            });
+        }
+
+        // Stopped strategies summary
+        if (stoppedStrategies.length > 0) {
+            console.log('🔴 STOPPED STRATEGIES:');
+            console.log('─'.repeat(80));
+            
+            stoppedStrategies.forEach((strategy, index) => {
+                console.log(`${index + 1}. ${strategy.name}`);
+                console.log(`   📊 Pair: WLD → ${strategy.targetTokenSymbol || strategy.targetToken}`);
+                console.log(`   📈 Total Trades: ${strategy.totalTrades || 0} | 💰 Profit: ${(strategy.totalProfit || 0).toFixed(6)} WLD`);
+                console.log(`   🔄 Cycles: ${strategy.completedCycles || 0}/${strategy.maxCycles || '∞'}`);
+                console.log('');
+            });
+        }
+
+        // Quick actions menu
+        console.log('⚡ QUICK ACTIONS:');
+        console.log('1. 🚀 Start All Stopped Strategies');
+        console.log('2. 🛑 Stop All Active Strategies');
+        console.log('3. 📊 Refresh Dashboard');
+        console.log('4. 🔙 Back to Strategy Builder');
+
+        const choice = await this.getUserInput('\nSelect action (1-4): ');
+
+        switch (choice) {
+            case '1':
+                await this.startAllStrategies();
+                break;
+            case '2':
+                await this.stopAllStrategies();
+                break;
+            case '3':
+                await this.multiStrategyDashboard();
+                break;
+            case '4':
+                return;
+            default:
+                console.log('❌ Invalid choice.');
+                await this.getUserInput('Press Enter to continue...');
+        }
+    }
+
     // View strategy statistics
     async viewStrategyStatistics() {
         console.clear();
@@ -4922,6 +7220,8 @@ class WorldchainTradingBot {
             console.log(`📊 Success Rate: ${(stats.successRate || 0).toFixed(1)}%`);
             console.log(`💰 Total Profit: ${(stats.totalProfit || 0).toFixed(6)} WLD`);
             console.log(`📈 Average Profit per Trade: ${(stats.averageProfitPerTrade || 0).toFixed(6)} WLD`);
+            console.log(`🔄 Total Cycles Completed: ${(stats.totalCyclesCompleted || 0)}`);
+            console.log(`📊 Average Cycles per Strategy: ${(stats.averageCyclesPerStrategy || 0).toFixed(1)}`);
             
             if (stats.bestPerformingStrategy) {
                 console.log(`\n🏆 Best Performing Strategy: ${stats.bestPerformingStrategy.name}`);

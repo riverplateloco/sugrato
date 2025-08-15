@@ -85,6 +85,19 @@ class StrategyBuilder extends EventEmitter {
             maxHistoryLength: 50, // Keep last 50 price points
             lastVolatilityCheck: 0,
             
+            // Trading Cycles Configuration
+            maxCycles: config.maxCycles || 0, // 0 = unlimited, >0 = limited cycles
+            currentCycle: 0, // Track current cycle number
+            completedCycles: 0, // Track completed cycles
+            
+            // DCA (Dollar Cost Averaging) Configuration
+            dcaConfig: config.dcaConfig || {
+                enabled: false,
+                levels: 0,
+                spreadRange: 0,
+                positionSizeMultiplier: 0
+            },
+            
             // Enhanced DIP buying system with configurable levels
             dipBuyingLevels: config.dipBuyingLevels || [
                 {
@@ -157,6 +170,28 @@ class StrategyBuilder extends EventEmitter {
         // Initialize smart thresholds
         this.updateSmartThresholds(strategy);
         
+        // Generate DCA levels if DCA is enabled
+        if (strategy.dcaConfig.enabled && strategy.dcaConfig.levels > 0) {
+            strategy.dcaLevels = [];
+            
+            for (let i = 1; i <= strategy.dcaConfig.levels; i++) {
+                const dcaLevel = {
+                    level: i,
+                    dipThreshold: strategy.dipThreshold + (strategy.dcaConfig.spreadRange * i),
+                    buyAmount: strategy.tradeAmount * (strategy.dcaConfig.positionSizeMultiplier === 0 ? 1 : strategy.dcaConfig.positionSizeMultiplier + 1),
+                    description: `DCA Level ${i} (${strategy.dcaConfig.spreadRange}% spread)`,
+                    executed: false,
+                    isDCALevel: true
+                };
+                strategy.dcaLevels.push(dcaLevel);
+            }
+            
+            console.log(`📈 DCA Levels Generated: ${strategy.dcaLevels.length} levels`);
+            strategy.dcaLevels.forEach(level => {
+                console.log(`   Level ${level.level}: ${level.dipThreshold.toFixed(1)}% dip → ${level.buyAmount.toFixed(3)} WLD`);
+            });
+        }
+        
         this.customStrategies.set(strategyId, strategy);
         this.saveStrategies();
         
@@ -168,6 +203,13 @@ class StrategyBuilder extends EventEmitter {
         console.log(`   💰 Base Trade Amount: ${config.tradeAmount} WLD (smart sizing enabled)`);
         console.log(`   ⏱️ Price Checks: Every ${strategy.priceCheckInterval / 1000}s`);
         console.log(`   🚀 Auto-Sell: ENABLED (immediate on profit target)`);
+        
+        // Display cycle limit
+        if (strategy.maxCycles === 0) {
+            console.log(`   🔄 Trading Cycles: Unlimited (run until manually stopped)`);
+        } else {
+            console.log(`   🔄 Trading Cycles: ${strategy.maxCycles} cycles (auto-stop after completion)`);
+        }
         
         if (strategy.enableProfitRange) {
             console.log(`   📊 Profit Range Mode: ${strategy.profitRangeMin}% - ${strategy.profitRangeMax}% (${strategy.profitRangeSteps} steps, ${strategy.profitRangeMode})`);
@@ -181,6 +223,11 @@ class StrategyBuilder extends EventEmitter {
         console.log(`   🛡️ Average Price Protection: Only buys below average`);
         console.log(`   🚀 Enhanced DIP Buying: ${strategy.dipBuyingLevels.length} configurable levels`);
         console.log(`   💰 DIP Buy Amounts: ${strategy.dipBuyingLevels.map(l => `${l.buyAmount} WLD`).join(' → ')}`);
+        
+        if (strategy.dcaConfig.enabled) {
+            console.log(`   📈 DCA Enabled: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+            console.log(`   💰 DCA Position Multiplier: ${strategy.dcaConfig.positionSizeMultiplier === 0 ? 'Same amount' : `${strategy.dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+        }
         
         return strategy;
     }
@@ -373,6 +420,25 @@ class StrategyBuilder extends EventEmitter {
                     const sellStatus = currentPrice >= targetPrice ? '🚀 SELL NOW' : `📈 Need +${(((targetPrice - currentPrice) / currentPrice) * 100).toFixed(1)}%`;
                     
                     console.log(`💼 ${strategy.name}: ${openPositions.length} pos | Avg: ${averagePrice.toFixed(8)} | Current: ${currentPrice.toFixed(8)} (${priceVsAverage >= 0 ? '+' : ''}${priceVsAverage.toFixed(1)}%) | ${buyStatus} | ${sellStatus}`);
+                }
+            }
+            
+            // Multi-strategy status display (every 20 checks = ~100 seconds)
+            if (activeState.checksPerformed % 20 === 0) {
+                const allActiveStrategies = this.getActiveStrategies();
+                if (allActiveStrategies.length > 1) {
+                    console.log(`\n🚀 MULTI-STRATEGY STATUS (${allActiveStrategies.length} Active)`);
+                    console.log(`════════════════════════════════════════════════════════════`);
+                    
+                    allActiveStrategies.forEach((activeStrategy, index) => {
+                        const activePositions = (activeStrategy.positions || []).filter(p => p.status === 'open');
+                        const totalWLD = activePositions.reduce((sum, pos) => sum + (pos.entryAmountWLD || 0), 0);
+                        const totalTokens = activePositions.reduce((sum, pos) => sum + (pos.entryAmountToken || 0), 0);
+                        const averagePrice = totalTokens > 0 ? totalWLD / totalTokens : 0;
+                        
+                        console.log(`${index + 1}. ${activeStrategy.name}: ${activePositions.length} pos | 💰 ${totalWLD.toFixed(6)} WLD | 💹 ${(activeStrategy.totalProfit || 0).toFixed(6)} WLD | 🔄 ${activeStrategy.completedCycles || 0}/${activeStrategy.maxCycles || '∞'}`);
+                    });
+                    console.log(`════════════════════════════════════════════════════════════`);
                 }
             }
             
@@ -1800,6 +1866,34 @@ class StrategyBuilder extends EventEmitter {
                 strategy.totalProfit += realizedPnL;
                 strategy.lastExecuted = Date.now();
                 
+                // Update cycle tracking
+                strategy.completedCycles++;
+                console.log(`🔄 Cycle ${strategy.completedCycles} completed for ${strategy.name}!`);
+                
+                // Check if cycle limit reached
+                if (strategy.maxCycles > 0 && strategy.completedCycles >= strategy.maxCycles) {
+                    console.log(`🎯 CYCLE LIMIT REACHED for ${strategy.name}!`);
+                    console.log(`   📊 Completed ${strategy.completedCycles}/${strategy.maxCycles} cycles`);
+                    console.log(`   🛑 Auto-stopping strategy...`);
+                    
+                    // Stop the strategy
+                    this.stopStrategy(strategy.id);
+                    
+                    console.log(`✅ Strategy "${strategy.name}" automatically stopped after completing ${strategy.maxCycles} cycles`);
+                    console.log(`   💰 Total Profit: ${strategy.totalProfit.toFixed(6)} WLD`);
+                    console.log(`   📊 Successful Trades: ${strategy.successfulTrades}`);
+                    console.log(`   🔄 Completed Cycles: ${strategy.completedCycles}`);
+                    
+                    this.emit('strategyCompleted', { 
+                        strategy, 
+                        reason: 'cycle_limit_reached',
+                        cyclesCompleted: strategy.completedCycles,
+                        totalProfit: strategy.totalProfit
+                    });
+                    
+                    return; // Exit early since strategy is stopped
+                }
+                
                 console.log(`✅ Profit sell executed successfully!`);
                 console.log(`   📊 Sold: ${totalTokensToSell} tokens → ${wldReceived.toFixed(6)} WLD`);
                 console.log(`   💰 Total Invested: ${totalInvested.toFixed(6)} WLD`);
@@ -1849,6 +1943,32 @@ class StrategyBuilder extends EventEmitter {
                 // Update strategy stats
                 strategy.successfulTrades++;
                 strategy.totalProfit += realizedPnL;
+                
+                // Update cycle tracking
+                strategy.completedCycles++;
+                console.log(`🔄 Cycle ${strategy.completedCycles} completed for ${strategy.name}!`);
+                
+                // Check if cycle limit reached
+                if (strategy.maxCycles > 0 && strategy.completedCycles >= strategy.maxCycles) {
+                    console.log(`🎯 CYCLE LIMIT REACHED for ${strategy.name}!`);
+                    console.log(`   📊 Completed ${strategy.completedCycles}/${strategy.maxCycles} cycles`);
+                    console.log(`   🛑 Auto-stopping strategy...`);
+                    
+                    // Stop the strategy
+                    this.stopStrategy(strategy.id);
+                    
+                    console.log(`✅ Strategy "${strategy.name}" automatically stopped after completing ${strategy.maxCycles} cycles`);
+                    console.log(`   💰 Total Profit: ${strategy.totalProfit.toFixed(6)} WLD`);
+                    console.log(`   📊 Successful Trades: ${strategy.successfulTrades}`);
+                    console.log(`   🔄 Completed Cycles: ${strategy.completedCycles}`);
+                    
+                    this.emit('strategyCompleted', { 
+                        strategy, 
+                        reason: 'cycle_limit_reached',
+                        cyclesCompleted: strategy.completedCycles,
+                        totalProfit: strategy.totalProfit
+                    });
+                }
                 
                 console.log(`✅ Profit sell executed successfully!`);
                 console.log(`   💰 Return: ${actualWLDReceived.toFixed(6)} WLD`);
@@ -1964,6 +2084,11 @@ class StrategyBuilder extends EventEmitter {
         }
     }
     
+    // Get all active strategies
+    getActiveStrategies() {
+        return this.getAllStrategies().filter(s => s.isActive);
+    }
+
     // Get strategy statistics
     getStrategyStatistics() {
         const strategies = this.getAllStrategies();
@@ -1975,6 +2100,10 @@ class StrategyBuilder extends EventEmitter {
         const successfulTrades = strategies.reduce((sum, s) => sum + (s.successfulTrades || 0), 0);
         const failedTrades = strategies.reduce((sum, s) => sum + ((s.totalTrades || 0) - (s.successfulTrades || 0)), 0);
         const totalProfit = strategies.reduce((sum, s) => sum + (s.totalProfit || 0), 0);
+        
+        // Calculate cycle statistics
+        const totalCyclesCompleted = strategies.reduce((sum, s) => sum + (s.completedCycles || 0), 0);
+        const averageCyclesPerStrategy = strategies.length > 0 ? (totalCyclesCompleted / strategies.length) : 0;
         
         // Calculate success rate and average profit per trade safely
         const successRate = totalTrades > 0 ? (successfulTrades / totalTrades * 100) : 0;
@@ -2000,6 +2129,8 @@ class StrategyBuilder extends EventEmitter {
             successRate: successRate,
             totalProfit: totalProfit,
             averageProfitPerTrade: averageProfitPerTrade,
+            totalCyclesCompleted,
+            averageCyclesPerStrategy,
             bestPerformingStrategy: bestPerformingStrategy ? {
                 name: bestPerformingStrategy.name || 'Unknown',
                 profit: bestPerformingStrategy.totalProfit || 0
