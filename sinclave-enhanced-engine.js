@@ -78,6 +78,12 @@ class SinclaveEnhancedTradingEngine {
         this.loggingCallback = callback;
     }
     
+    // Set optimized gas settings from main bot
+    setOptimizedGasSettings(gasSettings) {
+        this.optimizedGasSettings = gasSettings;
+        this.log(`⛽ Optimized gas settings updated: ${gasSettings.gasLimit} gas limit`, 'info');
+    }
+    
     // Smart logging method
     log(message, type = 'info') {
         if (this.loggingCallback) {
@@ -165,6 +171,26 @@ class SinclaveEnhancedTradingEngine {
     
     // Calculate optimized gas settings based on sinclave.js proven patterns
     calculateOptimizedGasSettings(networkGasPrice, isReplacementTx = false) {
+        // Check if we have optimized gas settings from the main bot
+        if (this.optimizedGasSettings && this.optimizedGasSettings.gasLimit) {
+            // Use the optimized settings from gas estimation
+            let finalGasPrice = this.optimizedGasSettings.maxFeePerGas;
+            let finalPriorityFee = this.optimizedGasSettings.maxPriorityFeePerGas;
+            
+            // For replacement transactions, increase by 25% for immediate processing
+            if (isReplacementTx) {
+                finalPriorityFee = finalPriorityFee * BigInt(125) / BigInt(100); // 25% increase
+                finalGasPrice = finalGasPrice * BigInt(125) / BigInt(100);
+            }
+            
+            return {
+                maxFeePerGas: finalGasPrice,
+                maxPriorityFeePerGas: finalPriorityFee,
+                gasLimit: this.optimizedGasSettings.gasLimit
+            };
+        }
+        
+        // Fallback to default settings if no optimization available
         // ULTRA FAST EXECUTION: Aggressive gas settings for sub-3000ms execution
         const baseGasPrice = ethers.parseUnits('0.005', 'gwei'); // Increased from 0.002 for ultra speed
         const priorityFee = ethers.parseUnits('0.002', 'gwei'); // Increased from 0.0005 for ultra speed

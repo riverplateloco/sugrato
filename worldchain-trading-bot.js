@@ -116,6 +116,17 @@ class WorldchainTradingBot {
         
         // Price checking interval configuration (default: 3 seconds)
         this.priceCheckInterval = this.config.priceCheckInterval || 3000; // 3 seconds
+        
+        // Gas estimation system
+        this.gasEstimation = {
+            isInitialized: false,
+            lastEstimation: null,
+            estimatedGasLimit: 350000, // Default fallback
+            estimatedGasPrice: null,
+            estimatedPriorityFee: null,
+            testSwapResults: [],
+            maxTestSwaps: 3 // Maximum test swaps to perform
+        };
     }
     
     // Logging control methods
@@ -888,6 +899,764 @@ class WorldchainTradingBot {
         console.log('⚠️  Note: Lower intervals use more resources but provide faster response times');
     }
     
+    // Gas Estimation System
+    async initializeGasEstimation() {
+        if (this.gasEstimation.isInitialized) {
+            console.log(chalk.yellow('⛽ Gas estimation already initialized'));
+            return;
+        }
+        
+        console.log(chalk.cyan('⛽ Initializing Gas Estimation System...'));
+        console.log(chalk.gray('This will perform test swaps to determine optimal gas settings'));
+        
+        try {
+            // Check if we have wallets and tokens for testing
+            if (this.wallets.length === 0) {
+                console.log(chalk.yellow('⚠️  No wallets available for gas estimation'));
+                console.log(chalk.yellow('   Gas estimation will be initialized when wallets are added'));
+                return;
+            }
+            
+            // Get test tokens (WLD and a common token)
+            const testTokens = await this.getTestTokensForGasEstimation();
+            if (testTokens.length < 2) {
+                console.log(chalk.yellow('⚠️  Insufficient tokens for gas estimation'));
+                console.log(chalk.yellow('   Gas estimation will be initialized when more tokens are available'));
+                return;
+            }
+            
+            // Perform gas estimation test swaps
+            await this.performGasEstimationTestSwaps(testTokens);
+            
+            this.gasEstimation.isInitialized = true;
+            this.gasEstimation.lastEstimation = Date.now();
+            
+            console.log(chalk.green('✅ Gas estimation system initialized successfully!'));
+            this.displayGasEstimationStatus();
+            
+        } catch (error) {
+            console.log(chalk.red(`❌ Gas estimation initialization failed: ${error.message}`));
+            console.log(chalk.yellow('   Using default gas settings'));
+        }
+    }
+    
+    // Get test tokens for gas estimation
+    async getTestTokensForGasEstimation() {
+        const testTokens = [];
+        
+        // Always include WLD
+        testTokens.push({
+            address: this.WLD_ADDRESS,
+            symbol: 'WLD',
+            decimals: 18
+        });
+        
+        // Try to find other common tokens
+        try {
+            // Check discovered tokens
+            if (this.discoveredTokens && Object.keys(this.discoveredTokens).length > 0) {
+                const tokenEntries = Object.entries(this.discoveredTokens);
+                for (const [address, tokenInfo] of tokenEntries) {
+                    if (address.toLowerCase() !== this.WLD_ADDRESS.toLowerCase()) {
+                        testTokens.push({
+                            address: address,
+                            symbol: tokenInfo.symbol || 'UNKNOWN',
+                            decimals: tokenInfo.decimals || 18
+                        });
+                        break; // Just need one additional token
+                    }
+                }
+            }
+            
+            // If no discovered tokens, try to discover some
+            if (testTokens.length < 2) {
+                console.log(chalk.cyan('🔍 Discovering tokens for gas estimation...'));
+                const discovered = await this.tokenDiscovery.discoverTokens(this.wallets[0].address);
+                if (discovered && Object.keys(discovered).length > 0) {
+                    const tokenEntries = Object.entries(discovered);
+                    for (const [address, tokenInfo] of tokenEntries) {
+                        if (address.toLowerCase() !== this.WLD_ADDRESS.toLowerCase()) {
+                            testTokens.push({
+                                address: address,
+                                symbol: tokenInfo.symbol || 'UNKNOWN',
+                                decimals: tokenInfo.decimals || 18
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.log(chalk.yellow(`⚠️  Token discovery for gas estimation failed: ${error.message}`));
+        }
+        
+        return testTokens;
+    }
+    
+    // Perform test swaps for gas estimation
+    async performGasEstimationTestSwaps(testTokens) {
+        console.log(chalk.cyan('🧪 Performing Gas Estimation Test Swaps...'));
+        console.log(chalk.gray('This will test small swaps to determine optimal gas settings'));
+        
+        const wallet = this.wallets[0]; // Use first wallet for testing
+        const testAmount = 0.001; // Very small test amount
+        
+        for (let i = 0; i < Math.min(this.gasEstimation.maxTestSwaps, testTokens.length - 1); i++) {
+            const tokenIn = testTokens[i];
+            const tokenOut = testTokens[i + 1];
+            
+            try {
+                console.log(chalk.cyan(`\n🧪 Test Swap ${i + 1}: ${tokenIn.symbol} → ${tokenOut.symbol}`));
+                
+                // Perform test swap with gas estimation
+                const result = await this.performTestSwapForGasEstimation(
+                    wallet, 
+                    tokenIn.address, 
+                    tokenOut.address, 
+                    testAmount
+                );
+                
+                if (result.success) {
+                    this.gasEstimation.testSwapResults.push({
+                        tokenIn: tokenIn.symbol,
+                        tokenOut: tokenOut.symbol,
+                        gasUsed: result.gasUsed,
+                        gasPrice: result.gasPrice,
+                        executionTime: result.executionTime,
+                        timestamp: Date.now()
+                    });
+                    
+                    console.log(chalk.green(`✅ Test swap successful: ${result.gasUsed} gas used`));
+                }
+                
+                // Small delay between tests
+                await this.sleep(1000);
+                
+            } catch (error) {
+                console.log(chalk.yellow(`⚠️  Test swap ${i + 1} failed: ${error.message}`));
+                continue;
+            }
+        }
+        
+        // Calculate optimal gas settings from test results
+        this.calculateOptimalGasSettings();
+    }
+    
+    // Perform a test swap specifically for gas estimation
+    async performTestSwapForGasEstimation(wallet, tokenIn, tokenOut, amount) {
+        try {
+            const startTime = Date.now();
+            
+            // Get current gas price from network
+            const feeData = await this.provider.getFeeData();
+            const networkGasPrice = feeData.gasPrice;
+            
+            // Create a very small test swap
+            const testAmountWei = ethers.parseUnits(amount.toString(), 18);
+            
+            // Get quote for test swap
+            let quote;
+            try {
+                quote = await this.sinclaveEngine.getHoldStationQuote(tokenIn, tokenOut, amount, wallet.address);
+            } catch (error) {
+                // Fallback to Uniswap quote
+                quote = await this.sinclaveEngine.getUniswapQuote(tokenIn, tokenOut, testAmountWei);
+            }
+            
+            if (!quote || !quote.to) {
+                throw new Error('No quote available for test swap');
+            }
+            
+            // Execute test swap with conservative gas settings
+            const testGasSettings = {
+                gasLimit: 500000, // Conservative limit for testing
+                maxFeePerGas: networkGasPrice * BigInt(120) / BigInt(100), // 20% buffer
+                maxPriorityFeePerGas: ethers.parseUnits('0.001', 'gwei')
+            };
+            
+            // Create signer
+            const signer = new ethers.Wallet(wallet.privateKey, this.provider);
+            
+            // Check approval
+            const tokenInContract = new ethers.Contract(tokenIn, this.sinclaveEngine.ERC20_ABI, signer);
+            const currentAllowance = await tokenInContract.allowance(wallet.address, quote.to);
+            
+            if (currentAllowance < testAmountWei) {
+                // Approve with test gas settings
+                const approveTx = await tokenInContract.approve(quote.to, testAmountWei, testGasSettings);
+                await approveTx.wait(1);
+            }
+            
+            // Execute test swap
+            const swapTx = await signer.sendTransaction({
+                to: quote.to,
+                data: quote.data,
+                value: quote.value || '0',
+                ...testGasSettings
+            });
+            
+            // Wait for confirmation
+            const receipt = await swapTx.wait(1);
+            
+            const executionTime = Date.now() - startTime;
+            
+            return {
+                success: receipt.status === 1,
+                gasUsed: receipt.gasUsed.toString(),
+                gasPrice: networkGasPrice.toString(),
+                executionTime: executionTime,
+                txHash: swapTx.hash
+            };
+            
+        } catch (error) {
+            throw new Error(`Test swap failed: ${error.message}`);
+        }
+    }
+    
+    // Calculate optimal gas settings from test results
+    calculateOptimalGasSettings() {
+        if (this.gasEstimation.testSwapResults.length === 0) {
+            console.log(chalk.yellow('⚠️  No test swap results available for gas optimization'));
+            return;
+        }
+        
+        console.log(chalk.cyan('📊 Calculating Optimal Gas Settings...'));
+        
+        // Calculate average gas usage
+        const totalGas = this.gasEstimation.testSwapResults.reduce((sum, result) => {
+            return sum + parseInt(result.gasUsed);
+        }, 0);
+        
+        const avgGasUsed = totalGas / this.gasEstimation.testSwapResults.length;
+        
+        // Add 20% buffer for safety
+        this.gasEstimation.estimatedGasLimit = Math.ceil(avgGasUsed * 1.2);
+        
+        // Get latest gas price
+        const latestResult = this.gasEstimation.testSwapResults[this.gasEstimation.testSwapResults.length - 1];
+        this.gasEstimation.estimatedGasPrice = latestResult.gasPrice;
+        
+        // Calculate optimal priority fee (1.5x network gas for speed)
+        const networkGasPrice = BigInt(latestResult.gasPrice);
+        this.gasEstimation.estimatedPriorityFee = networkGasPrice * BigInt(150) / BigInt(100);
+        
+        console.log(chalk.green('✅ Optimal Gas Settings Calculated:'));
+        console.log(chalk.white(`   ⛽ Gas Limit: ${this.gasEstimation.estimatedGasLimit.toLocaleString()}`));
+        console.log(chalk.white(`   💰 Gas Price: ${ethers.formatUnits(this.gasEstimation.estimatedGasPrice, 'gwei')} gwei`));
+        console.log(chalk.white(`   🚀 Priority Fee: ${ethers.formatUnits(this.gasEstimation.estimatedPriorityFee, 'gwei')} gwei`));
+        
+        // Update configuration
+        this.config.estimatedGasLimit = this.gasEstimation.estimatedGasLimit;
+        this.config.estimatedGasPrice = this.gasEstimation.estimatedGasPrice;
+        this.config.estimatedPriorityFee = this.gasEstimation.estimatedPriorityFee;
+        this.saveConfig();
+    }
+    
+    // Display gas estimation status
+    displayGasEstimationStatus() {
+        console.log(chalk.cyan('\n⛽ GAS ESTIMATION STATUS'));
+        console.log(chalk.gray('─'.repeat(50)));
+        console.log(`🔧 Status: ${this.gasEstimation.isInitialized ? '✅ Initialized' : '❌ Not Initialized'}`);
+        
+        if (this.gasEstimation.isInitialized) {
+            console.log(`📊 Last Estimation: ${this.gasEstimation.lastEstimation ? new Date(this.gasEstimation.lastEstimation).toLocaleString() : 'Never'}`);
+            console.log(`⛽ Estimated Gas Limit: ${this.gasEstimation.estimatedGasLimit.toLocaleString()}`);
+            console.log(`💰 Estimated Gas Price: ${this.gasEstimation.estimatedGasPrice ? ethers.formatUnits(this.gasEstimation.estimatedGasPrice, 'gwei') + ' gwei' : 'Not set'}`);
+            console.log(`🚀 Estimated Priority Fee: ${this.gasEstimation.estimatedPriorityFee ? ethers.formatUnits(this.gasEstimation.estimatedPriorityFee, 'gwei') + ' gwei' : 'Not set'}`);
+            console.log(`🧪 Test Swaps Performed: ${this.gasEstimation.testSwapResults.length}`);
+            
+            if (this.gasEstimation.testSwapResults.length > 0) {
+                console.log('\n📈 Test Swap Results:');
+                this.gasEstimation.testSwapResults.forEach((result, index) => {
+                    console.log(`   ${index + 1}. ${result.tokenIn} → ${result.tokenOut}: ${result.gasUsed} gas, ${result.executionTime}ms`);
+                });
+            }
+        } else {
+            console.log('💡 Run gas estimation to optimize trading performance');
+        }
+    }
+    
+    // Get optimized gas settings for trading
+    getOptimizedGasSettings() {
+        if (!this.gasEstimation.isInitialized) {
+            // Return default settings if not initialized
+            return {
+                gasLimit: 350000,
+                maxFeePerGas: ethers.parseUnits('0.005', 'gwei'),
+                maxPriorityFeePerGas: ethers.parseUnits('0.002', 'gwei')
+            };
+        }
+        
+        return {
+            gasLimit: this.gasEstimation.estimatedGasLimit,
+            maxFeePerGas: this.gasEstimation.estimatedGasPrice,
+            maxPriorityFeePerGas: this.gasEstimation.estimatedPriorityFee
+        };
+    }
+    
+    // Gas Estimation Menu
+    async gasEstimationMenu() {
+        while (true) {
+            console.clear();
+            console.log('⛽ GAS ESTIMATION SYSTEM');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            // Display current status
+            this.displayGasEstimationStatus();
+            console.log('');
+            
+            console.log('🎛️  Gas Estimation Controls:');
+            console.log('1. 🚀 Initialize Gas Estimation (Run Test Swaps)');
+            console.log('2. 🔄 Re-run Gas Estimation');
+            console.log('3. 📊 View Detailed Gas Analysis');
+            console.log('4. ⚙️  Configure Gas Estimation Settings');
+            console.log('5. 🧪 View Test Swap History');
+            console.log('6. 🔧 Manual Gas Settings Override');
+            console.log('7. 📈 Gas Performance Metrics');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    await this.initializeGasEstimation();
+                    break;
+                case '2':
+                    if (this.gasEstimation.isInitialized) {
+                        this.gasEstimation.isInitialized = false;
+                        this.gasEstimation.testSwapResults = [];
+                        await this.initializeGasEstimation();
+                    } else {
+                        console.log(chalk.yellow('⚠️  Gas estimation not yet initialized. Use option 1 first.'));
+                    }
+                    break;
+                case '3':
+                    this.displayDetailedGasAnalysis();
+                    break;
+                case '4':
+                    await this.configureGasEstimationSettings();
+                    break;
+                case '5':
+                    this.displayTestSwapHistory();
+                    break;
+                case '6':
+                    await this.manualGasSettingsOverride();
+                    break;
+                case '7':
+                    this.displayGasPerformanceMetrics();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // Display detailed gas analysis
+    displayDetailedGasAnalysis() {
+        console.log(chalk.cyan('\n📊 DETAILED GAS ANALYSIS'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        if (!this.gasEstimation.isInitialized) {
+            console.log(chalk.yellow('⚠️  Gas estimation not initialized. Run gas estimation first.'));
+            return;
+        }
+        
+        const results = this.gasEstimation.testSwapResults;
+        if (results.length === 0) {
+            console.log(chalk.yellow('⚠️  No test swap results available.'));
+            return;
+        }
+        
+        // Calculate statistics
+        const gasUsed = results.map(r => parseInt(r.gasUsed));
+        const executionTimes = results.map(r => r.executionTime);
+        
+        const avgGas = gasUsed.reduce((sum, gas) => sum + gas, 0) / gasUsed.length;
+        const minGas = Math.min(...gasUsed);
+        const maxGas = Math.max(...gasUsed);
+        const avgExecutionTime = executionTimes.reduce((sum, time) => sum + time, 0) / executionTimes.length;
+        
+        console.log(chalk.white('📈 Gas Usage Statistics:'));
+        console.log(`   ⛽ Average Gas Used: ${avgGas.toLocaleString()}`);
+        console.log(`   📉 Minimum Gas Used: ${minGas.toLocaleString()}`);
+        console.log(`   📈 Maximum Gas Used: ${maxGas.toLocaleString()}`);
+        console.log(`   📊 Gas Usage Range: ${(maxGas - minGas).toLocaleString()}`);
+        console.log('');
+        
+        console.log(chalk.white('⏱️  Execution Time Statistics:'));
+        console.log(`   ⏱️  Average Execution: ${avgExecutionTime.toFixed(0)}ms`);
+        console.log(`   🚀 Fastest Execution: ${Math.min(...executionTimes)}ms`);
+        console.log(`   🐌 Slowest Execution: ${Math.max(...executionTimes)}ms`);
+        console.log('');
+        
+        console.log(chalk.white('🎯 Optimization Recommendations:'));
+        if (maxGas - minGas > avgGas * 0.3) {
+            console.log('   ⚠️  High gas usage variance detected');
+            console.log('   💡 Consider running more test swaps for better accuracy');
+        } else {
+            console.log('   ✅ Gas usage is consistent across test swaps');
+        }
+        
+        if (avgExecutionTime > 5000) {
+            console.log('   ⚠️  Slow execution times detected');
+            console.log('   💡 Consider optimizing gas settings for faster execution');
+        } else {
+            console.log('   ✅ Execution times are optimal');
+        }
+    }
+    
+    // Configure gas estimation settings
+    async configureGasEstimationSettings() {
+        console.log(chalk.cyan('\n⚙️  GAS ESTIMATION CONFIGURATION'));
+        console.log(chalk.gray('─'.repeat(50)));
+        console.log('');
+        
+        console.log('📊 Current Settings:');
+        console.log(`   🧪 Max Test Swaps: ${this.gasEstimation.maxTestSwaps}`);
+        console.log(`   ⛽ Default Gas Limit: ${this.gasEstimation.estimatedGasLimit.toLocaleString()}`);
+        console.log('');
+        
+        console.log('🎛️  Configuration Options:');
+        console.log('1. 🔧 Set Maximum Test Swaps (1-5)');
+        console.log('2. ⛽ Set Default Gas Limit');
+        console.log('3. 🔄 Reset to Default Settings');
+        console.log('4. ⬅️  Back to Gas Estimation Menu');
+        console.log('');
+        
+        const choice = await this.getUserInput('Select option: ');
+        
+        switch (choice) {
+            case '1':
+                await this.setMaxTestSwaps();
+                break;
+            case '2':
+                await this.setDefaultGasLimit();
+                break;
+            case '3':
+                this.resetGasEstimationSettings();
+                break;
+            case '4':
+                return;
+            default:
+                console.log(chalk.red('❌ Invalid option'));
+        }
+    }
+    
+    // Set maximum test swaps
+    async setMaxTestSwaps() {
+        console.log('\n🔧 SET MAXIMUM TEST SWAPS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log('📊 Enter the maximum number of test swaps to perform (1-5):');
+        console.log('   • More test swaps = Better accuracy but higher cost');
+        console.log('   • Fewer test swaps = Lower cost but less accuracy');
+        console.log('');
+        
+        const input = await this.getUserInput('Enter max test swaps (1-5): ');
+        const maxSwaps = parseInt(input);
+        
+        if (isNaN(maxSwaps) || maxSwaps < 1 || maxSwaps > 5) {
+            console.log(chalk.red('❌ Invalid number. Please enter a number between 1 and 5.'));
+            return;
+        }
+        
+        this.gasEstimation.maxTestSwaps = maxSwaps;
+        this.config.maxTestSwaps = maxSwaps;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Maximum test swaps set to ${maxSwaps}`));
+    }
+    
+    // Set default gas limit
+    async setDefaultGasLimit() {
+        console.log('\n⛽ SET DEFAULT GAS LIMIT');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log('📊 Enter the default gas limit to use when estimation is not available:');
+        console.log('   • Higher limit = More expensive but guaranteed execution');
+        console.log('   • Lower limit = Cheaper but may fail on complex transactions');
+        console.log('');
+        
+        const input = await this.getUserInput('Enter default gas limit (e.g., 350000): ');
+        const gasLimit = parseInt(input);
+        
+        if (isNaN(gasLimit) || gasLimit < 100000 || gasLimit > 1000000) {
+            console.log(chalk.red('❌ Invalid gas limit. Please enter a number between 100,000 and 1,000,000.'));
+            return;
+        }
+        
+        this.gasEstimation.estimatedGasLimit = gasLimit;
+        this.config.estimatedGasLimit = gasLimit;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Default gas limit set to ${gasLimit.toLocaleString()}`));
+    }
+    
+    // Reset gas estimation settings
+    resetGasEstimationSettings() {
+        this.gasEstimation.maxTestSwaps = 3;
+        this.gasEstimation.estimatedGasLimit = 350000;
+        
+        // Remove from config
+        delete this.config.maxTestSwaps;
+        delete this.config.estimatedGasLimit;
+        this.saveConfig();
+        
+        console.log(chalk.green('✅ Gas estimation settings reset to defaults'));
+    }
+    
+    // Display test swap history
+    displayTestSwapHistory() {
+        console.log(chalk.cyan('\n🧪 TEST SWAP HISTORY'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        if (this.gasEstimation.testSwapResults.length === 0) {
+            console.log(chalk.yellow('📭 No test swaps performed yet.'));
+            return;
+        }
+        
+        this.gasEstimation.testSwapResults.forEach((result, index) => {
+            const timestamp = new Date(result.timestamp).toLocaleString();
+            console.log(chalk.white(`\n${index + 1}. ${result.tokenIn} → ${result.tokenOut}`));
+            console.log(`   📅 Time: ${timestamp}`);
+            console.log(`   ⛽ Gas Used: ${result.gasUsed.toLocaleString()}`);
+            console.log(`   💰 Gas Price: ${ethers.formatUnits(result.gasPrice, 'gwei')} gwei`);
+            console.log(`   ⏱️  Execution: ${result.executionTime}ms`);
+            console.log(`   🔗 TX: ${result.txHash}`);
+        });
+    }
+    
+    // Manual gas settings override
+    async manualGasSettingsOverride() {
+        console.log(chalk.cyan('\n🔧 MANUAL GAS SETTINGS OVERRIDE'));
+        console.log(chalk.gray('─'.repeat(50)));
+        console.log('');
+        console.log('⚠️  Warning: Manual override will bypass gas estimation');
+        console.log('   Use this only if you know the optimal gas settings');
+        console.log('');
+        
+        console.log('🎛️  Override Options:');
+        console.log('1. ⛽ Set Manual Gas Limit');
+        console.log('2. 💰 Set Manual Gas Price');
+        console.log('3. 🚀 Set Manual Priority Fee');
+        console.log('4. 🔄 Reset to Estimated Values');
+        console.log('5. ⬅️  Back to Gas Estimation Menu');
+        console.log('');
+        
+        const choice = await this.getUserInput('Select option: ');
+        
+        switch (choice) {
+            case '1':
+                await this.setManualGasLimit();
+                break;
+            case '2':
+                await this.setManualGasPrice();
+                break;
+            case '3':
+                await this.setManualPriorityFee();
+                break;
+            case '4':
+                this.resetToEstimatedValues();
+                break;
+            case '5':
+                return;
+            default:
+                console.log(chalk.red('❌ Invalid option'));
+        }
+    }
+    
+    // Set manual gas limit
+    async setManualGasLimit() {
+        console.log('\n⛽ SET MANUAL GAS LIMIT');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const currentLimit = this.gasEstimation.estimatedGasLimit;
+        console.log(`📊 Current estimated gas limit: ${currentLimit.toLocaleString()}`);
+        console.log('');
+        
+        const input = await this.getUserInput('Enter manual gas limit (or press Enter to keep current): ');
+        if (!input.trim()) {
+            console.log(chalk.yellow('⚠️  Keeping current gas limit'));
+            return;
+        }
+        
+        const gasLimit = parseInt(input);
+        if (isNaN(gasLimit) || gasLimit < 100000 || gasLimit > 1000000) {
+            console.log(chalk.red('❌ Invalid gas limit. Please enter a number between 100,000 and 1,000,000.'));
+            return;
+        }
+        
+        this.gasEstimation.estimatedGasLimit = gasLimit;
+        this.config.estimatedGasLimit = gasLimit;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Manual gas limit set to ${gasLimit.toLocaleString()}`));
+    }
+    
+    // Set manual gas price
+    async setManualGasPrice() {
+        console.log('\n💰 SET MANUAL GAS PRICE');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        if (this.gasEstimation.estimatedGasPrice) {
+            const currentPrice = ethers.formatUnits(this.gasEstimation.estimatedGasPrice, 'gwei');
+            console.log(`📊 Current estimated gas price: ${currentPrice} gwei`);
+        }
+        console.log('');
+        
+        const input = await this.getUserInput('Enter manual gas price in gwei (e.g., 0.005): ');
+        const gasPrice = parseFloat(input);
+        if (isNaN(gasPrice) || gasPrice <= 0) {
+            console.log(chalk.red('❌ Invalid gas price. Please enter a positive number.'));
+            return;
+        }
+        
+        this.gasEstimation.estimatedGasPrice = ethers.parseUnits(gasPrice.toString(), 'gwei');
+        this.config.estimatedGasPrice = this.gasEstimation.estimatedGasPrice.toString();
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Manual gas price set to ${gasPrice} gwei`));
+    }
+    
+    // Set manual priority fee
+    async setManualPriorityFee() {
+        console.log('\n🚀 SET MANUAL PRIORITY FEE');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        if (this.gasEstimation.estimatedPriorityFee) {
+            const currentFee = ethers.formatUnits(this.gasEstimation.estimatedPriorityFee, 'gwei');
+            console.log(`📊 Current estimated priority fee: ${currentFee} gwei`);
+        }
+        console.log('');
+        
+        const input = await this.getUserInput('Enter manual priority fee in gwei (e.g., 0.002): ');
+        const priorityFee = parseFloat(input);
+        if (isNaN(priorityFee) || priorityFee <= 0) {
+            console.log(chalk.red('❌ Invalid priority fee. Please enter a positive number.'));
+            return;
+        }
+        
+        this.gasEstimation.estimatedPriorityFee = ethers.parseUnits(priorityFee.toString(), 'gwei');
+        this.config.estimatedPriorityFee = this.gasEstimation.estimatedPriorityFee.toString();
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Manual priority fee set to ${priorityFee} gwei`));
+    }
+    
+    // Reset to estimated values
+    resetToEstimatedValues() {
+        if (!this.gasEstimation.isInitialized) {
+            console.log(chalk.yellow('⚠️  Gas estimation not initialized. Run gas estimation first.'));
+            return;
+        }
+        
+        // Reload from config
+        if (this.config.estimatedGasLimit) {
+            this.gasEstimation.estimatedGasLimit = this.config.estimatedGasLimit;
+        }
+        if (this.config.estimatedGasPrice) {
+            this.gasEstimation.estimatedGasPrice = BigInt(this.config.estimatedGasPrice);
+        }
+        if (this.config.estimatedPriorityFee) {
+            this.gasEstimation.estimatedPriorityFee = BigInt(this.config.estimatedPriorityFee);
+        }
+        
+        console.log(chalk.green('✅ Reset to estimated gas values'));
+    }
+    
+    // Display gas performance metrics
+    displayGasPerformanceMetrics() {
+        console.log(chalk.cyan('\n📈 GAS PERFORMANCE METRICS'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        if (!this.gasEstimation.isInitialized) {
+            console.log(chalk.yellow('⚠️  Gas estimation not initialized. Run gas estimation first.'));
+            return;
+        }
+        
+        const results = this.gasEstimation.testSwapResults;
+        if (results.length === 0) {
+            console.log(chalk.yellow('📭 No test swap results available.'));
+            return;
+        }
+        
+        // Calculate cost efficiency
+        const totalGasUsed = results.reduce((sum, r) => sum + parseInt(r.gasUsed), 0);
+        const avgGasPrice = results.reduce((sum, r) => sum + BigInt(r.gasPrice), BigInt(0)) / BigInt(results.length);
+        
+        const estimatedCost = (totalGasUsed * avgGasPrice) / BigInt(10**18); // Convert to ETH
+        const costPerSwap = estimatedCost / BigInt(results.length);
+        
+        console.log(chalk.white('💰 Cost Analysis:'));
+        console.log(`   💸 Total Estimated Cost: ${ethers.formatEther(estimatedCost)} ETH`);
+        console.log(`   💰 Cost per Test Swap: ${ethers.formatEther(costPerSwap)} ETH`);
+        console.log(`   🧪 Number of Test Swaps: ${results.length}`);
+        console.log('');
+        
+        console.log(chalk.white('🎯 Optimization Score:'));
+        const gasVariance = this.calculateGasVariance();
+        const executionEfficiency = this.calculateExecutionEfficiency();
+        
+        if (gasVariance < 0.1) {
+            console.log('   ✅ Gas Usage: Very Consistent (Excellent)');
+        } else if (gasVariance < 0.2) {
+            console.log('   ✅ Gas Usage: Consistent (Good)');
+        } else if (gasVariance < 0.3) {
+            console.log('   ⚠️  Gas Usage: Some Variance (Fair)');
+        } else {
+            console.log('   ❌ Gas Usage: High Variance (Poor)');
+        }
+        
+        if (executionEfficiency > 0.8) {
+            console.log('   ✅ Execution: Very Efficient (Excellent)');
+        } else if (executionEfficiency > 0.6) {
+            console.log('   ✅ Execution: Efficient (Good)');
+        } else if (executionEfficiency > 0.4) {
+            console.log('   ⚠️  Execution: Moderate Efficiency (Fair)');
+        } else {
+            console.log('   ❌ Execution: Low Efficiency (Poor)');
+        }
+    }
+    
+    // Calculate gas variance
+    calculateGasVariance() {
+        const results = this.gasEstimation.testSwapResults;
+        if (results.length < 2) return 0;
+        
+        const gasUsed = results.map(r => parseInt(r.gasUsed));
+        const mean = gasUsed.reduce((sum, gas) => sum + gas, 0) / gasUsed.length;
+        const variance = gasUsed.reduce((sum, gas) => sum + Math.pow(gas - mean, 2), 0) / gasUsed.length;
+        
+        return Math.sqrt(variance) / mean; // Coefficient of variation
+    }
+    
+    // Calculate execution efficiency
+    calculateExecutionEfficiency() {
+        const results = this.gasEstimation.testSwapResults;
+        if (results.length === 0) return 0;
+        
+        const executionTimes = results.map(r => r.executionTime);
+        const avgTime = executionTimes.reduce((sum, time) => sum + time, 0) / executionTimes.length;
+        
+        // Efficiency based on execution time (lower is better)
+        // Assuming optimal execution time is around 2000ms
+        const optimalTime = 2000;
+        const efficiency = Math.max(0, 1 - (avgTime - optimalTime) / optimalTime);
+        
+        return Math.min(1, Math.max(0, efficiency));
+    }
+    
     // Setup price database integration with token discovery
     setupPriceDatabaseIntegration() {
         // Auto-track discovered tokens
@@ -993,7 +1762,8 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('11. 🔊 Logging Control'));
         console.log(chalk.cyan('12. 🚀 Multi-Strategy Dashboard'));
         console.log(chalk.cyan('13. ⏱️  Price Check Interval'));
-        console.log(chalk.red('14. 🚪 Exit'));
+        console.log(chalk.cyan('14. ⛽ Gas Estimation'));
+        console.log(chalk.red('15. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -3022,6 +3792,9 @@ class WorldchainTradingBot {
                     await this.priceCheckIntervalMenu();
                     break;
                 case '14':
+                    await this.gasEstimationMenu();
+                    break;
+                case '15':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
