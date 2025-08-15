@@ -67,6 +67,238 @@ class PriceDatabase extends EventEmitter {
         return this.updateInterval;
     }
     
+    // Record a trade and update average price
+    recordTrade(tokenAddress, tradeType, price, quantity, timestamp = Date.now()) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData) {
+            console.log(`❌ Token ${tokenAddress} not found in price database`);
+            return false;
+        }
+        
+        const trade = {
+            timestamp,
+            type: tradeType, // 'buy' or 'sell'
+            price: parseFloat(price),
+            quantity: parseFloat(quantity),
+            value: parseFloat(price) * parseFloat(quantity)
+        };
+        
+        // Add to trade history
+        priceData.tradeHistory.push(trade);
+        
+        // Update trade statistics
+        if (tradeType === 'buy') {
+            priceData.totalBuys++;
+            priceData.totalBuyValue += trade.value;
+            
+            // Update average price for buys
+            if (priceData.totalQuantity === 0) {
+                // First buy
+                priceData.averagePrice = trade.price;
+                priceData.totalQuantity = trade.quantity;
+                priceData.totalValue = trade.value;
+            } else {
+                // Subsequent buys - weighted average
+                const newTotalValue = priceData.totalValue + trade.value;
+                const newTotalQuantity = priceData.totalQuantity + trade.quantity;
+                priceData.averagePrice = newTotalValue / newTotalQuantity;
+                priceData.totalQuantity = newTotalQuantity;
+                priceData.totalValue = newTotalValue;
+            }
+            
+            // Update best buy price
+            if (priceData.bestBuyPrice === 0 || trade.price < priceData.bestBuyPrice) {
+                priceData.bestBuyPrice = trade.price;
+            }
+            
+        } else if (tradeType === 'sell') {
+            priceData.totalSells++;
+            priceData.totalSellValue += trade.value;
+            
+            // For sells, we don't change the average price but track sell prices
+            priceData.sellPrices.push(trade.price);
+            
+            // Update worst sell price
+            if (priceData.worstSellPrice === 0 || trade.price > priceData.worstSellPrice) {
+                priceData.worstSellPrice = trade.price;
+            }
+            
+            // Calculate realized profit
+            const costBasis = priceData.averagePrice * trade.quantity;
+            const saleValue = trade.value;
+            const profit = saleValue - costBasis;
+            priceData.realizedProfit += profit;
+            
+            // Reduce total quantity and value
+            priceData.totalQuantity = Math.max(0, priceData.totalQuantity - trade.quantity);
+            priceData.totalValue = priceData.averagePrice * priceData.totalQuantity;
+        }
+        
+        // Update average buy/sell prices
+        if (priceData.totalBuys > 0) {
+            priceData.averageBuyPrice = priceData.totalBuyValue / priceData.totalBuys;
+        }
+        if (priceData.totalSells > 0) {
+            priceData.averageSellPrice = priceData.totalSellValue / priceData.totalSells;
+        }
+        
+        // Update last trade info
+        priceData.lastTradePrice = trade.price;
+        priceData.lastTradeType = tradeType;
+        priceData.lastTradeTimestamp = timestamp;
+        priceData.isTraded = true;
+        
+        // Calculate unrealized profit
+        if (priceData.totalQuantity > 0 && priceData.currentPrice > 0) {
+            const currentValue = priceData.totalQuantity * priceData.currentPrice;
+            priceData.unrealizedProfit = currentValue - priceData.totalValue;
+        }
+        
+        this.log(`📊 Trade recorded: ${priceData.symbol} ${tradeType.toUpperCase()} ${trade.quantity} @ ${trade.price.toFixed(8)} WLD`, 'trade');
+        this.log(`📊 New average price: ${priceData.averagePrice.toFixed(8)} WLD`, 'trade');
+        
+        return true;
+    }
+    
+    // Get current average price for a token
+    getAveragePrice(tokenAddress) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData) return null;
+        
+        return {
+            averagePrice: priceData.averagePrice,
+            discoveryPrice: priceData.discoveryPrice,
+            isTraded: priceData.isTraded,
+            totalQuantity: priceData.totalQuantity,
+            totalValue: priceData.totalValue,
+            lastTradePrice: priceData.lastTradePrice,
+            lastTradeType: priceData.lastTradeType,
+            bestBuyPrice: priceData.bestBuyPrice,
+            worstSellPrice: priceData.worstSellPrice,
+            averageBuyPrice: priceData.averageBuyPrice,
+            averageSellPrice: priceData.averageSellPrice,
+            realizedProfit: priceData.realizedProfit,
+            unrealizedProfit: priceData.unrealizedProfit
+        };
+    }
+    
+    // Check if current price is good for buying (better than average/sell prices)
+    isGoodBuyPrice(tokenAddress, currentPrice) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData) return false;
+        
+        const price = parseFloat(currentPrice);
+        
+        // If not traded yet, use discovery price as reference
+        if (!priceData.isTraded) {
+            return priceData.discoveryPrice > 0 && price < priceData.discoveryPrice;
+        }
+        
+        // If traded, check against average price and sell prices
+        const isBetterThanAverage = price < priceData.averagePrice;
+        const isBetterThanSells = priceData.sellPrices.length === 0 || 
+                                 price < Math.min(...priceData.sellPrices);
+        
+        return isBetterThanAverage && isBetterThanSells;
+    }
+    
+    // Get buy recommendation for a token
+    getBuyRecommendation(tokenAddress, currentPrice) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData) return null;
+        
+        const price = parseFloat(currentPrice);
+        const recommendation = {
+            token: priceData.symbol,
+            currentPrice: price,
+            shouldBuy: false,
+            reason: '',
+            referencePrice: 0,
+            priceDifference: 0,
+            priceDifferencePercent: 0
+        };
+        
+        if (!priceData.isTraded) {
+            // Not traded yet - compare with discovery price
+            if (priceData.discoveryPrice > 0) {
+                recommendation.referencePrice = priceData.discoveryPrice;
+                recommendation.priceDifference = priceData.discoveryPrice - price;
+                recommendation.priceDifferencePercent = ((priceData.discoveryPrice - price) / priceData.discoveryPrice) * 100;
+                recommendation.shouldBuy = price < priceData.discoveryPrice;
+                recommendation.reason = recommendation.shouldBuy ? 
+                    `Current price (${price.toFixed(8)}) is ${recommendation.priceDifferencePercent.toFixed(2)}% below discovery price (${priceData.discoveryPrice.toFixed(8)})` :
+                    `Current price (${price.toFixed(8)}) is ${Math.abs(recommendation.priceDifferencePercent).toFixed(2)}% above discovery price (${priceData.discoveryPrice.toFixed(8)})`;
+            }
+        } else {
+            // Traded - compare with average price and sell prices
+            const bestReferencePrice = Math.min(
+                priceData.averagePrice,
+                priceData.sellPrices.length > 0 ? Math.min(...priceData.sellPrices) : Infinity
+            );
+            
+            recommendation.referencePrice = bestReferencePrice;
+            recommendation.priceDifference = bestReferencePrice - price;
+            recommendation.priceDifferencePercent = ((bestReferencePrice - price) / bestReferencePrice) * 100;
+            recommendation.shouldBuy = price < bestReferencePrice;
+            
+            if (recommendation.shouldBuy) {
+                recommendation.reason = `Current price (${price.toFixed(8)}) is ${recommendation.priceDifferencePercent.toFixed(2)}% below reference price (${bestReferencePrice.toFixed(8)})`;
+            } else {
+                recommendation.reason = `Current price (${price.toFixed(8)}) is ${Math.abs(recommendation.priceDifferencePercent).toFixed(2)}% above reference price (${bestReferencePrice.toFixed(8)})`;
+            }
+        }
+        
+        return recommendation;
+    }
+    
+    // Get comprehensive trading analysis for a token
+    getTradingAnalysis(tokenAddress) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData) return null;
+        
+        const analysis = {
+            symbol: priceData.symbol,
+            address: tokenAddress,
+            discoveryPrice: priceData.discoveryPrice,
+            currentPrice: priceData.currentPrice,
+            averagePrice: priceData.averagePrice,
+            isTraded: priceData.isTraded,
+            totalQuantity: priceData.totalQuantity,
+            totalValue: priceData.totalValue,
+            // Trade statistics
+            totalBuys: priceData.totalBuys,
+            totalSells: priceData.totalSells,
+            totalBuyValue: priceData.totalBuyValue,
+            totalSellValue: priceData.totalSellValue,
+            averageBuyPrice: priceData.averageBuyPrice,
+            averageSellPrice: priceData.averageSellPrice,
+            bestBuyPrice: priceData.bestBuyPrice,
+            worstSellPrice: priceData.worstSellPrice,
+            // Profit tracking
+            realizedProfit: priceData.realizedProfit,
+            unrealizedProfit: priceData.unrealizedProfit,
+            // Sell price history
+            sellPrices: [...priceData.sellPrices],
+            // Recent trades
+            recentTrades: priceData.tradeHistory.slice(-5), // Last 5 trades
+            // Performance metrics
+            totalProfit: priceData.realizedProfit + priceData.unrealizedProfit,
+            profitMargin: priceData.totalBuyValue > 0 ? ((priceData.realizedProfit + priceData.unrealizedProfit) / priceData.totalBuyValue) * 100 : 0
+        };
+        
+        return analysis;
+    }
+    
     // Smart logging method
     log(message, type = 'info') {
         if (this.loggingCallback) {
@@ -138,7 +370,29 @@ class PriceDatabase extends EventEmitter {
                 discoveryTimestamp: tokenInfo.discoveryTimestamp || tokenInfo.discoveryDate || Date.now(),
                 baselineAveragePrice: tokenInfo.baselineAveragePrice || tokenInfo.baselinePrice || 0,
                 discoveryPriceInfo: tokenInfo.discoveryPriceInfo || null,
-                priceHistory: tokenInfo.priceHistory || []
+                priceHistory: tokenInfo.priceHistory || [],
+                // Advanced price tracking system
+                averagePrice: tokenInfo.discoveryPrice || tokenInfo.baselinePrice || 0, // Current average price
+                totalQuantity: 0, // Total quantity held
+                totalValue: 0, // Total value of holdings
+                tradeHistory: [], // Array of {timestamp, type, price, quantity, value}
+                sellPrices: [], // Array of sell prices for reference
+                lastTradePrice: 0, // Price of last trade
+                lastTradeType: null, // 'buy' or 'sell'
+                lastTradeTimestamp: 0,
+                // Performance tracking
+                totalBuys: 0,
+                totalSells: 0,
+                totalBuyValue: 0,
+                totalSellValue: 0,
+                realizedProfit: 0, // Profit from completed trades
+                unrealizedProfit: 0, // Current unrealized profit/loss
+                // Trading logic flags
+                isTraded: false, // Whether this token has been traded
+                bestBuyPrice: 0, // Best price we've bought at
+                worstSellPrice: 0, // Worst price we've sold at
+                averageBuyPrice: 0, // Average of all buy prices
+                averageSellPrice: 0 // Average of all sell prices
             });
         }
         

@@ -1616,6 +1616,533 @@ class WorldchainTradingBot {
         return 'Just now';
     }
     
+    // Advanced Price Tracking Menu
+    async advancedPriceTrackingMenu() {
+        while (true) {
+            console.clear();
+            console.log('📊 ADVANCED PRICE TRACKING');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            
+            const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+            const tradedTokens = trackedTokens.filter(addr => {
+                const analysis = this.priceDatabase.getTradingAnalysis(addr);
+                return analysis && analysis.isTraded;
+            });
+            
+            console.log(`📊 Tracked Tokens: ${trackedTokens.length}`);
+            console.log(`🔄 Traded Tokens: ${tradedTokens.length}`);
+            console.log(`📈 Untraded Tokens: ${trackedTokens.length - tradedTokens.length}`);
+            console.log('');
+            
+            console.log('📋 Advanced Tracking Options:');
+            console.log('1. 📊 View All Token Price Analysis');
+            console.log('2. 🎯 Buy Recommendations');
+            console.log('3. 📈 Trading Performance Summary');
+            console.log('4. 💰 Profit/Loss Analysis');
+            console.log('5. 🔄 Record Manual Trade');
+            console.log('6. 📋 Detailed Token Analysis');
+            console.log('7. 🎯 Smart Buy Opportunities');
+            console.log('8. 📊 Average Price Tracking');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    await this.viewAllTokenPriceAnalysis();
+                    break;
+                case '2':
+                    await this.viewBuyRecommendations();
+                    break;
+                case '3':
+                    await this.viewTradingPerformanceSummary();
+                    break;
+                case '4':
+                    await this.viewProfitLossAnalysis();
+                    break;
+                case '5':
+                    await this.recordManualTrade();
+                    break;
+                case '6':
+                    await this.viewDetailedTokenAnalysis();
+                    break;
+                case '7':
+                    await this.viewSmartBuyOpportunities();
+                    break;
+                case '8':
+                    await this.viewAveragePriceTracking();
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // View all token price analysis
+    async viewAllTokenPriceAnalysis() {
+        console.clear();
+        console.log('📊 ALL TOKEN PRICE ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for analysis.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        let tokenCount = 0;
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis) {
+                tokenCount++;
+                console.log(chalk.cyan(`${tokenCount}. ${analysis.symbol}`));
+                console.log(chalk.white(`   📍 Address: ${tokenAddress}`));
+                console.log(chalk.white(`   💎 Discovery Price: ${analysis.discoveryPrice.toFixed(8)} WLD`));
+                console.log(chalk.white(`   📊 Current Price: ${analysis.currentPrice.toFixed(8)} WLD`));
+                
+                if (analysis.isTraded) {
+                    console.log(chalk.green(`   📈 Average Price: ${analysis.averagePrice.toFixed(8)} WLD`));
+                    console.log(chalk.white(`   💰 Quantity: ${analysis.totalQuantity.toFixed(6)}`));
+                    console.log(chalk.white(`   📊 Total Value: ${analysis.totalValue.toFixed(4)} WLD`));
+                    console.log(chalk.yellow(`   🎯 Trades: ${analysis.totalBuys} buys, ${analysis.totalSells} sells`));
+                    
+                    const profitColor = analysis.totalProfit >= 0 ? chalk.green : chalk.red;
+                    console.log(profitColor(`   💰 Total Profit: ${analysis.totalProfit.toFixed(4)} WLD`));
+                } else {
+                    console.log(chalk.yellow(`   📭 Not traded yet`));
+                }
+                console.log('');
+            }
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View buy recommendations
+    async viewBuyRecommendations() {
+        console.clear();
+        console.log('🎯 BUY RECOMMENDATIONS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const recommendations = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData && priceData.currentPrice > 0) {
+                const recommendation = this.priceDatabase.getBuyRecommendation(tokenAddress, priceData.currentPrice);
+                if (recommendation) {
+                    recommendations.push(recommendation);
+                }
+            }
+        }
+        
+        // Sort by price difference percentage (best opportunities first)
+        recommendations.sort((a, b) => b.priceDifferencePercent - a.priceDifferencePercent);
+        
+        if (recommendations.length === 0) {
+            console.log(chalk.yellow('📭 No buy recommendations available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🎯 Found ${recommendations.length} tokens with buy analysis:`);
+        console.log('');
+        
+        recommendations.forEach((rec, index) => {
+            const shouldBuyColor = rec.shouldBuy ? chalk.green : chalk.red;
+            const shouldBuyIcon = rec.shouldBuy ? '✅' : '❌';
+            
+            console.log(chalk.cyan(`${index + 1}. ${shouldBuyIcon} ${rec.token}`));
+            console.log(chalk.white(`   📊 Current Price: ${rec.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🎯 Reference Price: ${rec.referencePrice.toFixed(8)} WLD`));
+            console.log(shouldBuyColor(`   📈 Price Difference: ${rec.priceDifferencePercent.toFixed(2)}%`));
+            console.log(chalk.gray(`   💡 ${rec.reason}`));
+            console.log('');
+        });
+        
+        // Summary
+        const goodBuys = recommendations.filter(r => r.shouldBuy);
+        console.log(chalk.white('📊 SUMMARY:'));
+        console.log(chalk.green(`   ✅ Good Buy Opportunities: ${goodBuys.length}`));
+        console.log(chalk.red(`   ❌ Not Recommended: ${recommendations.length - goodBuys.length}`));
+        
+        if (goodBuys.length > 0) {
+            console.log(chalk.green(`   🎯 Best Opportunity: ${goodBuys[0].token} (${goodBuys[0].priceDifferencePercent.toFixed(2)}% below reference)`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View trading performance summary
+    async viewTradingPerformanceSummary() {
+        console.clear();
+        console.log('📈 TRADING PERFORMANCE SUMMARY');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const tradedTokens = [];
+        let totalRealizedProfit = 0;
+        let totalUnrealizedProfit = 0;
+        let totalBuyValue = 0;
+        let totalSellValue = 0;
+        let totalBuys = 0;
+        let totalSells = 0;
+        
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis && analysis.isTraded) {
+                tradedTokens.push(analysis);
+                totalRealizedProfit += analysis.realizedProfit;
+                totalUnrealizedProfit += analysis.unrealizedProfit;
+                totalBuyValue += analysis.totalBuyValue;
+                totalSellValue += analysis.totalSellValue;
+                totalBuys += analysis.totalBuys;
+                totalSells += analysis.totalSells;
+            }
+        }
+        
+        if (tradedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No trading activity found.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by total profit
+        tradedTokens.sort((a, b) => b.totalProfit - a.totalProfit);
+        
+        console.log(chalk.white('📊 OVERALL PERFORMANCE:'));
+        console.log(chalk.white(`   🪙 Traded Tokens: ${tradedTokens.length}`));
+        console.log(chalk.white(`   📈 Total Buys: ${totalBuys}`));
+        console.log(chalk.white(`   📉 Total Sells: ${totalSells}`));
+        console.log(chalk.white(`   💰 Total Buy Value: ${totalBuyValue.toFixed(4)} WLD`));
+        console.log(chalk.white(`   💰 Total Sell Value: ${totalSellValue.toFixed(4)} WLD`));
+        
+        const totalProfit = totalRealizedProfit + totalUnrealizedProfit;
+        const profitColor = totalProfit >= 0 ? chalk.green : chalk.red;
+        console.log(profitColor(`   💰 Total Profit: ${totalProfit.toFixed(4)} WLD`));
+        console.log(chalk.green(`   ✅ Realized Profit: ${totalRealizedProfit.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Unrealized Profit: ${totalUnrealizedProfit.toFixed(4)} WLD`));
+        
+        if (totalBuyValue > 0) {
+            const profitMargin = (totalProfit / totalBuyValue) * 100;
+            console.log(profitColor(`   📊 Profit Margin: ${profitMargin.toFixed(2)}%`));
+        }
+        console.log('');
+        
+        console.log(chalk.white('🏆 TOP PERFORMERS:'));
+        tradedTokens.slice(0, 5).forEach((token, index) => {
+            const profitColor = token.totalProfit >= 0 ? chalk.green : chalk.red;
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol}`));
+            console.log(profitColor(`   💰 Profit: ${token.totalProfit.toFixed(4)} WLD`));
+            console.log(chalk.white(`   📈 Buys: ${token.totalBuys}, Sells: ${token.totalSells}`));
+            console.log(chalk.white(`   💎 Average Price: ${token.averagePrice.toFixed(8)} WLD`));
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View profit/loss analysis
+    async viewProfitLossAnalysis() {
+        console.clear();
+        console.log('💰 PROFIT/LOSS ANALYSIS');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const profitData = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const analysis = this.priceDatabase.getTradingAnalysis(tokenAddress);
+            if (analysis && analysis.isTraded) {
+                profitData.push({
+                    symbol: analysis.symbol,
+                    realizedProfit: analysis.realizedProfit,
+                    unrealizedProfit: analysis.unrealizedProfit,
+                    totalProfit: analysis.totalProfit,
+                    profitMargin: analysis.profitMargin,
+                    totalBuys: analysis.totalBuys,
+                    totalSells: analysis.totalSells
+                });
+            }
+        }
+        
+        if (profitData.length === 0) {
+            console.log(chalk.yellow('📭 No profit/loss data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by total profit
+        profitData.sort((a, b) => b.totalProfit - a.totalProfit);
+        
+        console.log(`💰 Profit/Loss Analysis for ${profitData.length} traded tokens:`);
+        console.log('');
+        
+        profitData.forEach((data, index) => {
+            const profitColor = data.totalProfit >= 0 ? chalk.green : chalk.red;
+            const profitIcon = data.totalProfit >= 0 ? '📈' : '📉';
+            
+            console.log(chalk.cyan(`${index + 1}. ${data.symbol}`));
+            console.log(profitColor(`   ${profitIcon} Total Profit: ${data.totalProfit.toFixed(4)} WLD`));
+            console.log(chalk.green(`   ✅ Realized: ${data.realizedProfit.toFixed(4)} WLD`));
+            console.log(chalk.yellow(`   📊 Unrealized: ${data.unrealizedProfit.toFixed(4)} WLD`));
+            console.log(profitColor(`   📊 Margin: ${data.profitMargin.toFixed(2)}%`));
+            console.log(chalk.white(`   🎯 Trades: ${data.totalBuys} buys, ${data.totalSells} sells`));
+            console.log('');
+        });
+        
+        // Summary statistics
+        const profitableTokens = profitData.filter(d => d.totalProfit > 0);
+        const losingTokens = profitData.filter(d => d.totalProfit < 0);
+        const totalRealized = profitData.reduce((sum, d) => sum + d.realizedProfit, 0);
+        const totalUnrealized = profitData.reduce((sum, d) => sum + d.unrealizedProfit, 0);
+        const totalProfit = totalRealized + totalUnrealized;
+        
+        console.log(chalk.white('📊 SUMMARY STATISTICS:'));
+        console.log(chalk.green(`   📈 Profitable Tokens: ${profitableTokens.length}`));
+        console.log(chalk.red(`   📉 Losing Tokens: ${losingTokens.length}`));
+        console.log(chalk.green(`   ✅ Total Realized Profit: ${totalRealized.toFixed(4)} WLD`));
+        console.log(chalk.yellow(`   📊 Total Unrealized Profit: ${totalUnrealized.toFixed(4)} WLD`));
+        
+        const totalProfitColor = totalProfit >= 0 ? chalk.green : chalk.red;
+        console.log(totalProfitColor(`   💰 Total Profit: ${totalProfit.toFixed(4)} WLD`));
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // Record manual trade
+    async recordManualTrade() {
+        console.clear();
+        console.log('🔄 RECORD MANUAL TRADE');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        
+        if (trackedTokens.length === 0) {
+            console.log(chalk.yellow('📭 No tokens available for trade recording.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log('📋 Select token for trade recording:');
+        console.log('');
+        
+        const tokenList = [];
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData) {
+                tokenList.push({
+                    address: tokenAddress,
+                    symbol: priceData.symbol,
+                    name: priceData.name
+                });
+            }
+        }
+        
+        // Sort by symbol
+        tokenList.sort((a, b) => a.symbol.localeCompare(b.symbol));
+        
+        tokenList.forEach((token, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${token.symbol} (${token.name})`));
+        });
+        
+        console.log('');
+        const tokenChoice = await this.getUserInput('Select token (or 0 to cancel): ');
+        
+        if (tokenChoice === '0') return;
+        
+        const tokenIndex = parseInt(tokenChoice) - 1;
+        if (tokenIndex < 0 || tokenIndex >= tokenList.length) {
+            console.log(chalk.red('❌ Invalid token selection.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        const selectedToken = tokenList[tokenIndex];
+        
+        // Get trade type
+        console.log('');
+        console.log('📋 Trade Type:');
+        console.log('1. Buy');
+        console.log('2. Sell');
+        console.log('');
+        
+        const tradeTypeChoice = await this.getUserInput('Select trade type: ');
+        const tradeType = tradeTypeChoice === '1' ? 'buy' : tradeTypeChoice === '2' ? 'sell' : null;
+        
+        if (!tradeType) {
+            console.log(chalk.red('❌ Invalid trade type.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        // Get trade details
+        console.log('');
+        const price = await this.getUserInput(`Enter ${tradeType} price (WLD): `);
+        const quantity = await this.getUserInput(`Enter ${tradeType} quantity: `);
+        
+        const priceNum = parseFloat(price);
+        const quantityNum = parseFloat(quantity);
+        
+        if (isNaN(priceNum) || isNaN(quantityNum) || priceNum <= 0 || quantityNum <= 0) {
+            console.log(chalk.red('❌ Invalid price or quantity.'));
+            await this.sleep(1500);
+            return;
+        }
+        
+        // Record the trade
+        const success = this.priceDatabase.recordTrade(selectedToken.address, tradeType, priceNum, quantityNum);
+        
+        if (success) {
+            console.log(chalk.green(`✅ Trade recorded successfully!`));
+            console.log(chalk.white(`   🪙 Token: ${selectedToken.symbol}`));
+            console.log(chalk.white(`   📊 Type: ${tradeType.toUpperCase()}`));
+            console.log(chalk.white(`   💰 Price: ${priceNum.toFixed(8)} WLD`));
+            console.log(chalk.white(`   📈 Quantity: ${quantityNum}`));
+            
+            // Show updated average price
+            const avgPrice = this.priceDatabase.getAveragePrice(selectedToken.address);
+            if (avgPrice) {
+                console.log(chalk.green(`   📊 New Average Price: ${avgPrice.averagePrice.toFixed(8)} WLD`));
+            }
+        } else {
+            console.log(chalk.red(`❌ Failed to record trade.`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View smart buy opportunities
+    async viewSmartBuyOpportunities() {
+        console.clear();
+        console.log('🎯 SMART BUY OPPORTUNITIES');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const opportunities = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+            if (priceData && priceData.currentPrice > 0) {
+                const isGoodBuy = this.priceDatabase.isGoodBuyPrice(tokenAddress, priceData.currentPrice);
+                if (isGoodBuy) {
+                    const recommendation = this.priceDatabase.getBuyRecommendation(tokenAddress, priceData.currentPrice);
+                    if (recommendation) {
+                        opportunities.push({
+                            ...recommendation,
+                            address: tokenAddress
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Sort by price difference percentage (best opportunities first)
+        opportunities.sort((a, b) => b.priceDifferencePercent - a.priceDifferencePercent);
+        
+        if (opportunities.length === 0) {
+            console.log(chalk.yellow('📭 No smart buy opportunities found.'));
+            console.log(chalk.gray('   All current prices are above reference prices.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        console.log(`🎯 Found ${opportunities.length} smart buy opportunities:`);
+        console.log('');
+        
+        opportunities.forEach((opp, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${opp.token}`));
+            console.log(chalk.white(`   📊 Current Price: ${opp.currentPrice.toFixed(8)} WLD`));
+            console.log(chalk.white(`   🎯 Reference Price: ${opp.referencePrice.toFixed(8)} WLD`));
+            console.log(chalk.green(`   📈 Opportunity: ${opp.priceDifferencePercent.toFixed(2)}% below reference`));
+            console.log(chalk.gray(`   💡 ${opp.reason}`));
+            console.log('');
+        });
+        
+        // Summary
+        console.log(chalk.white('📊 OPPORTUNITY SUMMARY:'));
+        console.log(chalk.green(`   🎯 Total Opportunities: ${opportunities.length}`));
+        if (opportunities.length > 0) {
+            console.log(chalk.green(`   🏆 Best Opportunity: ${opportunities[0].token} (${opportunities[0].priceDifferencePercent.toFixed(2)}% below reference)`));
+            console.log(chalk.green(`   📊 Average Opportunity: ${(opportunities.reduce((sum, opp) => sum + opp.priceDifferencePercent, 0) / opportunities.length).toFixed(2)}% below reference`));
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
+    // View average price tracking
+    async viewAveragePriceTracking() {
+        console.clear();
+        console.log('📊 AVERAGE PRICE TRACKING');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        
+        const trackedTokens = Array.from(this.priceDatabase.trackedTokens);
+        const averagePriceData = [];
+        
+        for (const tokenAddress of trackedTokens) {
+            const avgPrice = this.priceDatabase.getAveragePrice(tokenAddress);
+            if (avgPrice) {
+                const priceData = this.priceDatabase.priceData.get(tokenAddress.toLowerCase());
+                averagePriceData.push({
+                    symbol: priceData?.symbol || 'Unknown',
+                    address: tokenAddress,
+                    ...avgPrice
+                });
+            }
+        }
+        
+        if (averagePriceData.length === 0) {
+            console.log(chalk.yellow('📭 No average price data available.'));
+            await this.getUserInput('\nPress Enter to continue...');
+            return;
+        }
+        
+        // Sort by average price (lowest first)
+        averagePriceData.sort((a, b) => a.averagePrice - b.averagePrice);
+        
+        console.log(`📊 Average Price Tracking for ${averagePriceData.length} tokens:`);
+        console.log('');
+        
+        averagePriceData.forEach((data, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${data.symbol}`));
+            console.log(chalk.white(`   💎 Discovery Price: ${data.discoveryPrice.toFixed(8)} WLD`));
+            console.log(chalk.green(`   📊 Average Price: ${data.averagePrice.toFixed(8)} WLD`));
+            
+            if (data.isTraded) {
+                console.log(chalk.white(`   💰 Quantity: ${data.totalQuantity.toFixed(6)}`));
+                console.log(chalk.white(`   📈 Total Value: ${data.totalValue.toFixed(4)} WLD`));
+                console.log(chalk.yellow(`   🎯 Best Buy: ${data.bestBuyPrice.toFixed(8)} WLD`));
+                if (data.worstSellPrice > 0) {
+                    console.log(chalk.yellow(`   📉 Worst Sell: ${data.worstSellPrice.toFixed(8)} WLD`));
+                }
+                console.log(chalk.white(`   📊 Last Trade: ${data.lastTradeType?.toUpperCase()} @ ${data.lastTradePrice.toFixed(8)} WLD`));
+            } else {
+                console.log(chalk.yellow(`   📭 Not traded yet`));
+            }
+            console.log('');
+        });
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
     // Gas Estimation System
     async initializeGasEstimation() {
         if (this.gasEstimation.isInitialized) {
@@ -2807,8 +3334,9 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('13. ⏱️  Price Check Interval'));
         console.log(chalk.cyan('14. 🔄 Price Refresh Configuration'));
         console.log(chalk.cyan('15. 💎 Discovery Price Analysis'));
-        console.log(chalk.cyan('16. ⛽ Gas Estimation'));
-        console.log(chalk.red('17. 🚪 Exit'));
+        console.log(chalk.cyan('16. 📊 Advanced Price Tracking'));
+        console.log(chalk.cyan('17. ⛽ Gas Estimation'));
+        console.log(chalk.red('18. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -4855,9 +5383,12 @@ class WorldchainTradingBot {
                     await this.discoveryPriceAnalysisMenu();
                     break;
                 case '16':
-                    await this.gasEstimationMenu();
+                    await this.advancedPriceTrackingMenu();
                     break;
                 case '17':
+                    await this.gasEstimationMenu();
+                    break;
+                case '18':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
