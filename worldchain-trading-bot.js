@@ -1129,21 +1129,32 @@ class WorldchainTradingBot {
         
         const avgGasUsed = totalGas / this.gasEstimation.testSwapResults.length;
         
-        // Add 20% buffer for safety
-        this.gasEstimation.estimatedGasLimit = Math.ceil(avgGasUsed * 1.2);
+        // Add 30% buffer for safety (increased from 20% for better reliability)
+        this.gasEstimation.estimatedGasLimit = Math.ceil(avgGasUsed * 1.3);
         
         // Get latest gas price
         const latestResult = this.gasEstimation.testSwapResults[this.gasEstimation.testSwapResults.length - 1];
         this.gasEstimation.estimatedGasPrice = latestResult.gasPrice;
         
-        // Calculate optimal priority fee (1.5x network gas for speed)
+        // Calculate optimal priority fee (1.2x network gas for speed - more conservative)
         const networkGasPrice = BigInt(latestResult.gasPrice);
-        this.gasEstimation.estimatedPriorityFee = networkGasPrice * BigInt(150) / BigInt(100);
+        this.gasEstimation.estimatedPriorityFee = networkGasPrice * BigInt(120) / BigInt(100);
+        
+        // Ensure gas limit is within reasonable bounds
+        if (this.gasEstimation.estimatedGasLimit < 200000) {
+            this.gasEstimation.estimatedGasLimit = 200000; // Minimum safe limit
+        } else if (this.gasEstimation.estimatedGasLimit > 500000) {
+            this.gasEstimation.estimatedGasLimit = 500000; // Maximum safe limit
+        }
         
         console.log(chalk.green('✅ Optimal Gas Settings Calculated:'));
         console.log(chalk.white(`   ⛽ Gas Limit: ${this.gasEstimation.estimatedGasLimit.toLocaleString()}`));
         console.log(chalk.white(`   💰 Gas Price: ${ethers.formatUnits(this.gasEstimation.estimatedGasPrice, 'gwei')} gwei`));
         console.log(chalk.white(`   🚀 Priority Fee: ${ethers.formatUnits(this.gasEstimation.estimatedPriorityFee, 'gwei')} gwei`));
+        
+        // Calculate estimated cost
+        const estimatedCost = (BigInt(this.gasEstimation.estimatedGasLimit) * this.gasEstimation.estimatedGasPrice) / BigInt(10**18);
+        console.log(chalk.white(`   💸 Estimated Cost: ${ethers.formatEther(estimatedCost)} ETH per transaction`));
         
         // Update configuration
         this.config.estimatedGasLimit = this.gasEstimation.estimatedGasLimit;
@@ -1187,11 +1198,19 @@ class WorldchainTradingBot {
             };
         }
         
-        return {
+        // Update sinclave engine with optimized settings
+        const optimizedSettings = {
             gasLimit: this.gasEstimation.estimatedGasLimit,
             maxFeePerGas: this.gasEstimation.estimatedGasPrice,
             maxPriorityFeePerGas: this.gasEstimation.estimatedPriorityFee
         };
+        
+        // Pass to sinclave engine for use in trades
+        if (this.sinclaveEngine && this.sinclaveEngine.setOptimizedGasSettings) {
+            this.sinclaveEngine.setOptimizedGasSettings(optimizedSettings);
+        }
+        
+        return optimizedSettings;
     }
     
     // Gas Estimation Menu
@@ -1214,6 +1233,8 @@ class WorldchainTradingBot {
             console.log('5. 🧪 View Test Swap History');
             console.log('6. 🔧 Manual Gas Settings Override');
             console.log('7. 📈 Gas Performance Metrics');
+            console.log('8. 💰 Check Gas Funds for All Wallets');
+            console.log('9. ⚡ Get Conservative Gas Settings');
             console.log('');
             console.log('0. ⬅️  Back to Main Menu');
             console.log('');
@@ -1247,6 +1268,12 @@ class WorldchainTradingBot {
                     break;
                 case '7':
                     this.displayGasPerformanceMetrics();
+                    break;
+                case '8':
+                    await this.checkAllWalletGasFunds();
+                    break;
+                case '9':
+                    this.displayConservativeGasSettings();
                     break;
                 case '0':
                     return;
@@ -1655,6 +1682,152 @@ class WorldchainTradingBot {
         const efficiency = Math.max(0, 1 - (avgTime - optimalTime) / optimalTime);
         
         return Math.min(1, Math.max(0, efficiency));
+    }
+    
+    // Check if wallet has sufficient funds for gas
+    async checkGasFunds(wallet, estimatedGasCost = null) {
+        try {
+            const balance = await this.provider.getBalance(wallet.address);
+            const gasSettings = this.getOptimizedGasSettings();
+            
+            // Calculate estimated gas cost if not provided
+            if (!estimatedGasCost) {
+                const gasLimit = gasSettings.gasLimit;
+                const gasPrice = gasSettings.maxFeePerGas;
+                estimatedGasCost = BigInt(gasLimit) * gasPrice;
+            }
+            
+            // Add 20% buffer for safety
+            const requiredFunds = estimatedGasCost * BigInt(120) / BigInt(100);
+            
+            if (balance < requiredFunds) {
+                const shortfall = requiredFunds - balance;
+                console.log(chalk.red(`❌ Insufficient funds for gas: ${ethers.formatEther(balance)} ETH available, ${ethers.formatEther(requiredFunds)} ETH required`));
+                console.log(chalk.yellow(`   💸 Shortfall: ${ethers.formatEther(shortfall)} ETH`));
+                console.log(chalk.yellow(`   💡 Add more ETH to wallet or reduce gas settings`));
+                return false;
+            }
+            
+            console.log(chalk.green(`✅ Sufficient funds for gas: ${ethers.formatEther(balance)} ETH available, ${ethers.formatEther(requiredFunds)} ETH required`));
+            return true;
+            
+        } catch (error) {
+            console.log(chalk.red(`❌ Error checking gas funds: ${error.message}`));
+            return false;
+        }
+    }
+    
+    // Get conservative gas settings for low balance situations
+    getConservativeGasSettings() {
+        return {
+            gasLimit: 250000, // Lower gas limit
+            maxFeePerGas: ethers.parseUnits('0.003', 'gwei'), // Lower gas price
+            maxPriorityFeePerGas: ethers.parseUnits('0.001', 'gwei') // Lower priority fee
+        };
+    }
+    
+    // Check gas funds for all wallets
+    async checkAllWalletGasFunds() {
+        console.log(chalk.cyan('\n💰 CHECKING GAS FUNDS FOR ALL WALLETS'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        if (this.wallets.length === 0) {
+            console.log(chalk.yellow('📭 No wallets available to check.'));
+            return;
+        }
+        
+        const gasSettings = this.getOptimizedGasSettings();
+        const estimatedGasCost = BigInt(gasSettings.gasLimit) * gasSettings.maxFeePerGas;
+        
+        console.log(chalk.white(`📊 Current Gas Settings:`));
+        console.log(`   ⛽ Gas Limit: ${gasSettings.gasLimit.toLocaleString()}`);
+        console.log(`   💰 Gas Price: ${ethers.formatUnits(gasSettings.maxFeePerGas, 'gwei')} gwei`);
+        console.log(`   💸 Estimated Cost: ${ethers.formatEther(estimatedGasCost)} ETH per transaction`);
+        console.log('');
+        
+        let totalFunds = BigInt(0);
+        let insufficientWallets = 0;
+        
+        for (const wallet of this.wallets) {
+            try {
+                const balance = await this.provider.getBalance(wallet.address);
+                totalFunds += balance;
+                
+                const requiredFunds = estimatedGasCost * BigInt(120) / BigInt(100); // 20% buffer
+                const hasFunds = balance >= requiredFunds;
+                
+                const statusIcon = hasFunds ? '✅' : '❌';
+                const statusText = hasFunds ? 'SUFFICIENT' : 'INSUFFICIENT';
+                
+                console.log(chalk.white(`${statusIcon} ${wallet.name || 'Wallet'}:`));
+                console.log(`   📍 Address: ${wallet.address}`);
+                console.log(`   💰 Balance: ${ethers.formatEther(balance)} ETH`);
+                console.log(`   ⛽ Gas Status: ${statusText}`);
+                
+                if (!hasFunds) {
+                    const shortfall = requiredFunds - balance;
+                    console.log(`   💸 Shortfall: ${ethers.formatEther(shortfall)} ETH`);
+                    insufficientWallets++;
+                }
+                console.log('');
+                
+            } catch (error) {
+                console.log(chalk.red(`❌ Error checking wallet ${wallet.name || wallet.address}: ${error.message}`));
+            }
+        }
+        
+        console.log(chalk.cyan('📊 SUMMARY:'));
+        console.log(`   💰 Total Funds Across All Wallets: ${ethers.formatEther(totalFunds)} ETH`);
+        console.log(`   ✅ Wallets with Sufficient Gas: ${this.wallets.length - insufficientWallets}`);
+        console.log(`   ❌ Wallets with Insufficient Gas: ${insufficientWallets}`);
+        
+        if (insufficientWallets > 0) {
+            console.log(chalk.yellow('\n💡 RECOMMENDATIONS:'));
+            console.log('   • Add more ETH to wallets with insufficient funds');
+            console.log('   • Use conservative gas settings for low balance wallets');
+            console.log('   • Consider consolidating funds into fewer wallets');
+        }
+    }
+    
+    // Display conservative gas settings
+    displayConservativeGasSettings() {
+        console.log(chalk.cyan('\n⚡ CONSERVATIVE GAS SETTINGS'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        const conservativeSettings = this.getConservativeGasSettings();
+        const estimatedCost = BigInt(conservativeSettings.gasLimit) * conservativeSettings.maxFeePerGas;
+        
+        console.log(chalk.white('🎯 Conservative Settings (for low balance situations):'));
+        console.log(`   ⛽ Gas Limit: ${conservativeSettings.gasLimit.toLocaleString()}`);
+        console.log(`   💰 Gas Price: ${ethers.formatUnits(conservativeSettings.maxFeePerGas, 'gwei')} gwei`);
+        console.log(`   🚀 Priority Fee: ${ethers.formatUnits(conservativeSettings.maxPriorityFeePerGas, 'gwei')} gwei`);
+        console.log(`   💸 Estimated Cost: ${ethers.formatEther(estimatedCost)} ETH per transaction`);
+        console.log('');
+        
+        if (this.gasEstimation.isInitialized) {
+            const optimizedSettings = this.getOptimizedGasSettings();
+            const optimizedCost = BigInt(optimizedSettings.gasLimit) * optimizedSettings.maxFeePerGas;
+            const savings = optimizedCost - estimatedCost;
+            
+            console.log(chalk.white('📊 Comparison with Optimized Settings:'));
+            console.log(`   ⚡ Conservative Cost: ${ethers.formatEther(estimatedCost)} ETH`);
+            console.log(`   🚀 Optimized Cost: ${ethers.formatEther(optimizedCost)} ETH`);
+            console.log(`   💰 Potential Savings: ${ethers.formatEther(savings)} ETH per transaction`);
+            console.log('');
+        }
+        
+        console.log(chalk.yellow('💡 When to use Conservative Settings:'));
+        console.log('   • Low ETH balance in wallet');
+        console.log('   • Network congestion (high gas prices)');
+        console.log('   • Non-urgent transactions');
+        console.log('   • Cost-sensitive trading strategies');
+        console.log('');
+        
+        console.log(chalk.cyan('🔧 To apply conservative settings:'));
+        console.log('   • Use option 6 (Manual Gas Settings Override)');
+        console.log('   • Set gas limit to 250,000');
+        console.log('   • Set gas price to 0.003 gwei');
+        console.log('   • Set priority fee to 0.001 gwei');
     }
     
     // Setup price database integration with token discovery
