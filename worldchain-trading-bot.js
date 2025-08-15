@@ -5767,8 +5767,113 @@ class WorldchainTradingBot {
                 return;
             }
 
-            // Configure DIP buying levels
-            console.log('\n🚀 ENHANCED DIP BUYING SYSTEM');
+            // DCA (Dollar Cost Averaging) Configuration
+            console.log('\n📈 DCA (DOLLAR COST AVERAGING) CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('💡 DCA automatically buys more tokens at progressively better prices');
+            console.log('📉 Each DCA level triggers when price drops by the spread range');
+            console.log('💰 This improves your average entry price for better profits');
+            console.log('');
+            
+            const enableDCA = await this.getUserInput('Enable DCA (Dollar Cost Averaging)? (y/N): ').toLowerCase() === 'y';
+            
+            let dcaConfig = {
+                enabled: false,
+                levels: 0,
+                spreadRange: 0,
+                positionSizeMultiplier: 0
+            };
+            
+            if (enableDCA) {
+                dcaConfig.enabled = true;
+                
+                // Number of DCA levels
+                console.log('\n📊 DCA LEVELS CONFIGURATION:');
+                console.log('💡 How many additional buy levels do you want?');
+                console.log('   • 1 level = Buy once more at better price');
+                console.log('   • 2 levels = Buy twice more at better prices');
+                console.log('   • 3 levels = Buy three times more at better prices');
+                console.log('   • 4 levels = Buy four times more at better prices');
+                console.log('   • 5 levels = Buy five times more at better prices');
+                console.log('');
+                
+                const dcaLevels = parseInt(await this.getUserInput('Number of DCA levels (1-5): '));
+                if (dcaLevels >= 1 && dcaLevels <= 5) {
+                    dcaConfig.levels = dcaLevels;
+                } else {
+                    console.log('❌ Invalid number of levels. Using 3 levels.');
+                    dcaConfig.levels = 3;
+                }
+                
+                // Spread range configuration
+                console.log('\n📉 DCA SPREAD RANGE CONFIGURATION:');
+                console.log('💡 How much should the price drop before each DCA level triggers?');
+                console.log('   • 3% = Buy every 3% price drop (aggressive)');
+                console.log('   • 5% = Buy every 5% price drop (balanced, recommended)');
+                console.log('   • 7% = Buy every 7% price drop (conservative)');
+                console.log('   • 10% = Buy every 10% price drop (very conservative)');
+                console.log('');
+                
+                const spreadRange = parseFloat(await this.getUserInput('DCA spread range % (3-10): '));
+                if (spreadRange >= 3 && spreadRange <= 10) {
+                    dcaConfig.spreadRange = spreadRange;
+                } else {
+                    console.log('❌ Invalid spread range. Using 5%.');
+                    dcaConfig.spreadRange = 5;
+                }
+                
+                // Position size multiplier configuration
+                console.log('\n💰 DCA POSITION SIZE MULTIPLIER:');
+                console.log('💡 How much more should you buy at each DCA level?');
+                console.log('   • 0 = Same amount as initial trade (no increase)');
+                console.log('   • 1 = Double the amount (2x initial trade)');
+                console.log('   • 2 = Triple the amount (3x initial trade)');
+                console.log('   • 3 = Quadruple the amount (4x initial trade)');
+                console.log('   • 4 = Five times the amount (5x initial trade)');
+                console.log('');
+                console.log(`📊 Example: If initial trade is ${tradeAmount} WLD:`);
+                console.log(`   • Level 0 (initial): ${tradeAmount} WLD`);
+                console.log(`   • Level 1 (DCA): ${tradeAmount * 2} WLD (if multiplier = 1)`);
+                console.log(`   • Level 2 (DCA): ${tradeAmount * 3} WLD (if multiplier = 2)`);
+                console.log(`   • Level 3 (DCA): ${tradeAmount * 4} WLD (if multiplier = 3)`);
+                console.log('');
+                
+                const positionMultiplier = parseInt(await this.getUserInput('Position size multiplier (0-4): '));
+                if (positionMultiplier >= 0 && positionMultiplier <= 4) {
+                    dcaConfig.positionSizeMultiplier = positionMultiplier;
+                } else {
+                    console.log('❌ Invalid multiplier. Using 1 (double amount).');
+                    dcaConfig.positionSizeMultiplier = 1;
+                }
+                
+                // Display DCA configuration summary
+                console.log('\n✅ DCA CONFIGURATION SUMMARY:');
+                console.log(`   📊 DCA Levels: ${dcaConfig.levels}`);
+                console.log(`   📉 Spread Range: ${dcaConfig.spreadRange}%`);
+                console.log(`   💰 Position Multiplier: ${dcaConfig.positionSizeMultiplier === 0 ? 'Same amount' : `${dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+                console.log('');
+                console.log(`🎯 DCA TRIGGER POINTS (example with ${dcaConfig.spreadRange}% spread):`);
+                console.log(`   • Initial Buy: At ${dipThreshold}% dip`);
+                console.log(`   • DCA Level 1: At ${dipThreshold + dcaConfig.spreadRange}% dip`);
+                console.log(`   • DCA Level 2: At ${dipThreshold + (dcaConfig.spreadRange * 2)}% dip`);
+                console.log(`   • DCA Level 3: At ${dcaConfig.levels >= 3 ? dipThreshold + (dcaConfig.spreadRange * 3) : 'N/A'}% dip`);
+                console.log(`   • DCA Level 4: At ${dcaConfig.levels >= 4 ? dipThreshold + (dcaConfig.spreadRange * 4) : 'N/A'}% dip`);
+                console.log(`   • DCA Level 5: At ${dcaConfig.levels >= 5 ? dipThreshold + (dcaConfig.spreadRange * 5) : 'N/A'}% dip`);
+                console.log('');
+                console.log(`💰 DCA BUY AMOUNTS (example with ${dcaConfig.positionSizeMultiplier === 0 ? 'same' : `${dcaConfig.positionSizeMultiplier + 1}x`} multiplier):`);
+                console.log(`   • Initial Buy: ${tradeAmount} WLD`);
+                console.log(`   • DCA Level 1: ${tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1)} WLD`);
+                console.log(`   • DCA Level 2: ${tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1)} WLD`);
+                console.log(`   • DCA Level 3: ${dcaConfig.levels >= 3 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log(`   • DCA Level 4: ${dcaConfig.levels >= 4 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log(`   • DCA Level 5: ${dcaConfig.levels >= 5 ? tradeAmount * (dcaConfig.positionSizeMultiplier === 0 ? 1 : dcaConfig.positionSizeMultiplier + 1) : 'N/A'} WLD`);
+                console.log('');
+            } else {
+                console.log('❌ DCA disabled - will use single buy strategy');
+            }
+            
+            // Configure DIP buying levels (legacy enhanced DIP buying)
+            console.log('\n🚀 ENHANCED DIP BUYING SYSTEM (Legacy)');
             console.log('════════════════════════════════════════════════════════════');
             console.log('💡 This system allows you to buy more when prices drop further');
             console.log('📉 Each level triggers at a deeper dip with larger amounts');
@@ -5864,6 +5969,8 @@ class WorldchainTradingBot {
                 profitRangeMax,
                 profitRangeSteps,
                 profitRangeMode,
+                // DCA Configuration
+                dcaConfig,
                 // Enhanced DIP Buying Configuration
                 dipBuyingLevels: dipBuyingLevels.length > 0 ? dipBuyingLevels : undefined
             };
@@ -5885,13 +5992,28 @@ class WorldchainTradingBot {
             console.log(`💰 Trade Amount: ${tradeAmount} WLD`);
             console.log(`⏱️ Monitoring: Every ${this.priceCheckInterval / 1000}s, DIP detection over ${dipTimeframeLabel}`);
             console.log(`📊 Historical Analysis: ${enableHistoricalComparison ? 'ENABLED' : 'DISABLED'}`);
+            
+            // Display DCA configuration if enabled
+            if (dcaConfig.enabled) {
+                console.log(`📈 DCA Configuration: ${dcaConfig.levels} levels, ${dcaConfig.spreadRange}% spread, ${dcaConfig.positionSizeMultiplier === 0 ? 'same amount' : `${dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+            }
+            
             console.log(`\n🎯 AVERAGE PRICE STRATEGY BEHAVIOR:`);
             console.log(`   1️⃣ Monitor ${tokenInfo.symbol} price continuously`);
             console.log(`   2️⃣ WAIT for ${dipThreshold}% price drop (DIP)`);
             console.log(`   3️⃣ BUY ${tradeAmount} WLD → ${tokenInfo.symbol} ONLY if price ≤ average`);
-            console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
-            console.log(`   5️⃣ NEVER buy above current average price`);
-            console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+            
+            if (dcaConfig.enabled) {
+                console.log(`   4️⃣ DCA: Buy more at ${dcaConfig.spreadRange}% intervals as price drops further`);
+                console.log(`   5️⃣ DCA: Increase position size by ${dcaConfig.positionSizeMultiplier === 0 ? 'same amount' : `${dcaConfig.positionSizeMultiplier + 1}x`} at each level`);
+                console.log(`   6️⃣ CONTINUE buying on additional DIPs to improve average price`);
+                console.log(`   7️⃣ NEVER buy above current average price`);
+                console.log(`   8️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+            } else {
+                console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
+                console.log(`   5️⃣ NEVER buy above current average price`);
+                console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+            }
             
             if (dipBuyingLevels.length > 0) {
                 console.log(`\n🚀 ENHANCED DIP BUYING STRATEGY:`);

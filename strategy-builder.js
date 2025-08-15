@@ -85,6 +85,14 @@ class StrategyBuilder extends EventEmitter {
             maxHistoryLength: 50, // Keep last 50 price points
             lastVolatilityCheck: 0,
             
+            // DCA (Dollar Cost Averaging) Configuration
+            dcaConfig: config.dcaConfig || {
+                enabled: false,
+                levels: 0,
+                spreadRange: 0,
+                positionSizeMultiplier: 0
+            },
+            
             // Enhanced DIP buying system with configurable levels
             dipBuyingLevels: config.dipBuyingLevels || [
                 {
@@ -157,6 +165,28 @@ class StrategyBuilder extends EventEmitter {
         // Initialize smart thresholds
         this.updateSmartThresholds(strategy);
         
+        // Generate DCA levels if DCA is enabled
+        if (strategy.dcaConfig.enabled && strategy.dcaConfig.levels > 0) {
+            strategy.dcaLevels = [];
+            
+            for (let i = 1; i <= strategy.dcaConfig.levels; i++) {
+                const dcaLevel = {
+                    level: i,
+                    dipThreshold: strategy.dipThreshold + (strategy.dcaConfig.spreadRange * i),
+                    buyAmount: strategy.tradeAmount * (strategy.dcaConfig.positionSizeMultiplier === 0 ? 1 : strategy.dcaConfig.positionSizeMultiplier + 1),
+                    description: `DCA Level ${i} (${strategy.dcaConfig.spreadRange}% spread)`,
+                    executed: false,
+                    isDCALevel: true
+                };
+                strategy.dcaLevels.push(dcaLevel);
+            }
+            
+            console.log(`📈 DCA Levels Generated: ${strategy.dcaLevels.length} levels`);
+            strategy.dcaLevels.forEach(level => {
+                console.log(`   Level ${level.level}: ${level.dipThreshold.toFixed(1)}% dip → ${level.buyAmount.toFixed(3)} WLD`);
+            });
+        }
+        
         this.customStrategies.set(strategyId, strategy);
         this.saveStrategies();
         
@@ -181,6 +211,11 @@ class StrategyBuilder extends EventEmitter {
         console.log(`   🛡️ Average Price Protection: Only buys below average`);
         console.log(`   🚀 Enhanced DIP Buying: ${strategy.dipBuyingLevels.length} configurable levels`);
         console.log(`   💰 DIP Buy Amounts: ${strategy.dipBuyingLevels.map(l => `${l.buyAmount} WLD`).join(' → ')}`);
+        
+        if (strategy.dcaConfig.enabled) {
+            console.log(`   📈 DCA Enabled: ${strategy.dcaConfig.levels} levels, ${strategy.dcaConfig.spreadRange}% spread`);
+            console.log(`   💰 DCA Position Multiplier: ${strategy.dcaConfig.positionSizeMultiplier === 0 ? 'Same amount' : `${strategy.dcaConfig.positionSizeMultiplier + 1}x amount`}`);
+        }
         
         return strategy;
     }
