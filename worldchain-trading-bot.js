@@ -408,6 +408,13 @@ class WorldchainTradingBot {
         // Initialize the RPC manager
         rpcManager.initialize();
         
+        // Perform initial speed test to optimize endpoint order
+        this.performInitialSpeedTest(rpcManager).then(() => {
+            console.log('✅ RPC speed test completed - endpoints optimized for performance');
+        }).catch(error => {
+            console.log(`⚠️ Speed test failed: ${error.message}`);
+        });
+        
         // Start periodic health checks
         setInterval(() => {
             rpcManager.performHealthCheck().catch(error => {
@@ -416,6 +423,230 @@ class WorldchainTradingBot {
         }, rpcManager.healthCheckInterval);
 
         return rpcManager;
+    }
+
+    // Perform comprehensive RPC speed test
+    async performInitialSpeedTest(rpcManager) {
+        console.log('🏁 Performing RPC Speed Test...');
+        console.log('   📊 Testing all endpoints for optimal performance');
+        
+        const testResults = [];
+        const testOperations = [
+            { name: 'Block Number', operation: (provider) => provider.getBlockNumber() },
+            { name: 'Gas Price', operation: (provider) => provider.getFeeData() },
+            { name: 'Network', operation: (provider) => provider.getNetwork() }
+        ];
+        
+        // Test each provider
+        for (let i = 0; i < rpcManager.providers.length; i++) {
+            const provider = rpcManager.providers[i];
+            const endpoint = rpcManager.endpoints[i];
+            const endpointName = rpcManager.getEndpointDisplay(endpoint);
+            
+            console.log(`\n🔍 Testing: ${endpointName}`);
+            
+            const result = {
+                index: i,
+                endpoint: endpoint,
+                endpointName: endpointName,
+                isHealthy: false,
+                averageResponseTime: 0,
+                successfulTests: 0,
+                failedTests: 0,
+                testResults: []
+            };
+            
+            // Perform multiple test operations
+            for (const testOp of testOperations) {
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    const startTime = Date.now();
+                    try {
+                        await testOp.operation(provider);
+                        const responseTime = Date.now() - startTime;
+                        
+                        result.testResults.push({
+                            operation: testOp.name,
+                            attempt: attempt,
+                            responseTime: responseTime,
+                            success: true
+                        });
+                        
+                        result.successfulTests++;
+                        console.log(`   ✅ ${testOp.name} (attempt ${attempt}): ${responseTime}ms`);
+                        
+                    } catch (error) {
+                        const responseTime = Date.now() - startTime;
+                        result.testResults.push({
+                            operation: testOp.name,
+                            attempt: attempt,
+                            responseTime: responseTime,
+                            success: false,
+                            error: error.message
+                        });
+                        
+                        result.failedTests++;
+                        console.log(`   ❌ ${testOp.name} (attempt ${attempt}): Failed (${error.message})`);
+                    }
+                }
+            }
+            
+            // Calculate average response time for successful tests
+            const successfulTests = result.testResults.filter(t => t.success);
+            if (successfulTests.length > 0) {
+                result.averageResponseTime = successfulTests.reduce((sum, t) => sum + t.responseTime, 0) / successfulTests.length;
+                result.isHealthy = result.successfulTests >= 6; // At least 6 out of 9 tests must pass
+            }
+            
+            testResults.push(result);
+            
+            // Brief pause between providers
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // Sort results by performance (fastest first)
+        testResults.sort((a, b) => {
+            if (a.isHealthy !== b.isHealthy) {
+                return b.isHealthy - a.isHealthy; // Healthy providers first
+            }
+            return a.averageResponseTime - b.averageResponseTime; // Fastest first
+        });
+        
+        // Display comprehensive results
+        console.log('\n📊 RPC SPEED TEST RESULTS');
+        console.log('════════════════════════════════════════════════════════════');
+        
+        testResults.forEach((result, index) => {
+            const status = result.isHealthy ? '🟢' : '🔴';
+            const rank = index + 1;
+            const rankText = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`;
+            
+            console.log(`${rankText} ${status} ${result.endpointName}`);
+            console.log(`   📊 Average Response Time: ${result.averageResponseTime.toFixed(0)}ms`);
+            console.log(`   ✅ Successful Tests: ${result.successfulTests}/9`);
+            console.log(`   ❌ Failed Tests: ${result.failedTests}/9`);
+            console.log(`   🏆 Performance Rank: ${rank}/${testResults.length}`);
+            
+            if (result.isHealthy) {
+                if (result.averageResponseTime < 200) {
+                    console.log(`   ⚡ Performance: EXCELLENT (< 200ms)`);
+                } else if (result.averageResponseTime < 500) {
+                    console.log(`   ⚡ Performance: GOOD (200-500ms)`);
+                } else if (result.averageResponseTime < 1000) {
+                    console.log(`   ⚡ Performance: ACCEPTABLE (500-1000ms)`);
+                } else {
+                    console.log(`   ⚡ Performance: SLOW (> 1000ms)`);
+                }
+            } else {
+                console.log(`   ⚠️ Status: UNHEALTHY (too many failures)`);
+            }
+            console.log('');
+        });
+        
+        // Optimize endpoint order based on performance
+        const healthyResults = testResults.filter(r => r.isHealthy);
+        if (healthyResults.length > 0) {
+            console.log('🔄 Optimizing endpoint order based on performance...');
+            
+            // Reorder endpoints for optimal performance
+            const optimizedEndpoints = [];
+            const optimizedProviders = [];
+            const optimizedHealthChecks = {};
+            
+            healthyResults.forEach((result, index) => {
+                optimizedEndpoints.push(result.endpoint);
+                optimizedProviders.push(rpcManager.providers[result.index]);
+                optimizedHealthChecks[index] = rpcManager.healthChecks[result.index];
+            });
+            
+            // Add unhealthy endpoints at the end
+            testResults.filter(r => !r.isHealthy).forEach(result => {
+                optimizedEndpoints.push(result.endpoint);
+                optimizedProviders.push(rpcManager.providers[result.index]);
+                optimizedHealthChecks[optimizedEndpoints.length - 1] = rpcManager.healthChecks[result.index];
+            });
+            
+            // Update RPC manager with optimized order
+            rpcManager.endpoints = optimizedEndpoints;
+            rpcManager.providers = optimizedProviders;
+            rpcManager.healthChecks = optimizedHealthChecks;
+            rpcManager.currentIndex = 0; // Start with fastest provider
+            
+            console.log(`✅ Endpoint order optimized! Fastest provider: ${rpcManager.getCurrentEndpointDisplay()}`);
+            
+            // Save speed test results to config
+            this.saveSpeedTestResults(testResults);
+        } else {
+            console.log('⚠️ No healthy endpoints found - using original order');
+        }
+        
+        return testResults;
+    }
+
+    // Save speed test results to config
+    saveSpeedTestResults(results) {
+        try {
+            const speedTestData = {
+                timestamp: Date.now(),
+                results: results.map(r => ({
+                    endpointName: r.endpointName,
+                    averageResponseTime: r.averageResponseTime,
+                    isHealthy: r.isHealthy,
+                    successfulTests: r.successfulTests,
+                    failedTests: r.failedTests,
+                    rank: results.indexOf(r) + 1
+                }))
+            };
+            
+            const configPath = path.join(__dirname, 'rpc-speed-test.json');
+            fs.writeFileSync(configPath, JSON.stringify(speedTestData, null, 2));
+        } catch (error) {
+            console.log(`⚠️ Failed to save speed test results: ${error.message}`);
+        }
+    }
+
+    // Manual RPC speed test (for testing during runtime)
+    async manualSpeedTest() {
+        console.clear();
+        console.log('🏁 MANUAL RPC SPEED TEST');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('This will test all RPC endpoints and optimize for performance.');
+        console.log('The test may take 30-60 seconds to complete.');
+        console.log('');
+        
+        const confirm = await this.getUserInput('Start speed test? (y/N): ');
+        if (!confirm.toLowerCase().startsWith('y')) {
+            console.log('❌ Speed test cancelled.');
+            return;
+        }
+        
+        try {
+            const results = await this.performInitialSpeedTest(this.rpcManager);
+            
+            console.log('\n🎯 SPEED TEST COMPLETE!');
+            console.log('════════════════════════════════════════════════════════════');
+            
+            const fastest = results.find(r => r.isHealthy);
+            if (fastest) {
+                console.log(`🏆 Fastest Provider: ${fastest.endpointName}`);
+                console.log(`⚡ Response Time: ${fastest.averageResponseTime.toFixed(0)}ms`);
+                console.log(`📊 Current Provider: ${this.rpcManager.getCurrentEndpointDisplay()}`);
+                
+                if (this.rpcManager.currentIndex === fastest.index) {
+                    console.log('✅ Already using the fastest provider!');
+                } else {
+                    console.log('🔄 Switching to fastest provider...');
+                    this.rpcManager.currentIndex = fastest.index;
+                    this.updateProvider();
+                }
+            } else {
+                console.log('⚠️ No healthy providers found');
+            }
+            
+        } catch (error) {
+            console.log(`❌ Speed test failed: ${error.message}`);
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
     }
 
     // Update provider when RPC changes
