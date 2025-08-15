@@ -68,6 +68,23 @@ class SinclaveEnhancedTradingEngine {
         };
         
         console.log('🚀 Sinclave Enhanced Trading Engine initialized with proven patterns');
+        
+        // Logging callback for smart logging
+        this.loggingCallback = null;
+    }
+    
+    // Set logging callback
+    setLoggingCallback(callback) {
+        this.loggingCallback = callback;
+    }
+    
+    // Smart logging method
+    log(message, type = 'info') {
+        if (this.loggingCallback) {
+            this.loggingCallback(message, type);
+        } else {
+            console.log(message);
+        }
     }
     
     // Initialize optimized provider with caching (from sinclave.js)
@@ -86,7 +103,7 @@ class SinclaveEnhancedTradingEngine {
             // Test connection
             await provider.getBlockNumber();
             this.cachedProvider = provider;
-            console.log('✅ Connected to optimized public RPC endpoint');
+            this.log('✅ Connected to optimized public RPC endpoint', 'holdstation');
             return provider;
             
         } catch (error) {
@@ -462,7 +479,7 @@ class SinclaveEnhancedTradingEngine {
     // Get quote using HoldStation SDK (OPTIMIZED WITH CACHING)
     async getHoldStationQuote(tokenIn, tokenOut, amountIn, receiver) {
         try {
-            console.log('🚀 Attempting to initialize HoldStation SDK...');
+            this.log('🚀 Attempting to initialize HoldStation SDK...', 'holdstation');
             
             // OPTIMIZATION: Cache SDK components to avoid re-initialization
             if (!this.cachedSDK) {
@@ -481,9 +498,9 @@ class SinclaveEnhancedTradingEngine {
                 // Set partner code (like sinclave.js)
                 try {
                     setPartnerCode("COCOLISO_PREMIUM_2025");
-                    console.log('✅ Partner code set for HoldStation SDK');
+                    this.log('✅ Partner code set for HoldStation SDK', 'holdstation');
                 } catch (error) {
-                    console.log('⚠️ Partner code already set');
+                    this.log('⚠️ Partner code already set', 'holdstation');
                 }
 
                 // Initialize client and components (CACHED)
@@ -514,9 +531,9 @@ class SinclaveEnhancedTradingEngine {
                     worldswap
                 };
 
-                console.log('✅ HoldStation SDK initialized successfully');
+                this.log('✅ HoldStation SDK initialized successfully', 'holdstation');
             } else {
-                console.log('✅ Using cached HoldStation SDK components');
+                this.log('✅ Using cached HoldStation SDK components', 'holdstation');
             }
 
             // Get swap quote using cached HoldStation SDK (FAST)
@@ -529,14 +546,14 @@ class SinclaveEnhancedTradingEngine {
                 receiver: receiver
             };
             
-            console.log(`📊 Getting HoldStation quote for ${params.amountIn} tokens...`);
+            this.log(`📊 Getting HoldStation quote for ${params.amountIn} tokens...`, 'holdstation');
             const quote = await this.cachedSDK.swapHelper.estimate.quote(params);
 
             if (!quote || !quote.to) {
                 throw new Error('HoldStation SDK returned no quote for this pair');
             }
 
-            console.log('✅ HoldStation quote received successfully');
+            this.log('✅ HoldStation quote received successfully', 'holdstation');
             
             return {
                 to: quote.to,

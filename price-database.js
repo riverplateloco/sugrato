@@ -31,6 +31,23 @@ class PriceDatabase extends EventEmitter {
         this.loadTriggers();
         
         console.log('📊 Price Database initialized');
+        
+        // Logging callback for smart logging
+        this.loggingCallback = null;
+    }
+    
+    // Set logging callback
+    setLoggingCallback(callback) {
+        this.loggingCallback = callback;
+    }
+    
+    // Smart logging method
+    log(message, type = 'info') {
+        if (this.loggingCallback) {
+            this.loggingCallback(message, type);
+        } else {
+            console.log(message);
+        }
     }
     
     // Validate token address format
@@ -153,7 +170,7 @@ class PriceDatabase extends EventEmitter {
         const updatePromises = [];
         const tokensArray = Array.from(this.trackedTokens);
         
-        console.log(`📊 Updating prices for ${tokensArray.length} tokens...`);
+        this.log(`📊 Updating prices for ${tokensArray.length} tokens...`, 'price');
         
         // Update prices in parallel for better performance
         for (const tokenAddress of tokensArray) {
@@ -185,9 +202,9 @@ class PriceDatabase extends EventEmitter {
             
             // Display results with better formatting
             if (successful > 0 || cached > 0) {
-                console.log(`📊 Price update complete: ✅ ${successful} fresh, 🔄 ${cached} cached, ❌ ${failed} failed`);
+                this.log(`📊 Price update complete: ✅ ${successful} fresh, 🔄 ${cached} cached, ❌ ${failed} failed`, 'price');
             } else {
-                console.log(`⚠️  Price update: All ${failed} tokens failed - check network connection and token addresses`);
+                this.log(`⚠️  Price update: All ${failed} tokens failed - check network connection and token addresses`, 'error');
             }
             
             // Only proceed with dependent operations if we have some price data

@@ -50,8 +50,18 @@ class WorldchainTradingBot {
         this.tokenDiscovery = new TokenDiscoveryService(this.provider, this.config);
         this.strategyBuilder = new StrategyBuilder(this.tradingEngine, this.sinclaveEngine, this.config, this.telegramNotifications);
         
+        // Pass logging callback to sinclave engine
+        this.sinclaveEngine.setLoggingCallback((message, type) => {
+            this.smartLog(message, type);
+        });
+        
         // Initialize Price Database
         this.priceDatabase = new PriceDatabase(this.sinclaveEngine, this.config);
+        
+        // Pass logging callback to price database
+        this.priceDatabase.setLoggingCallback((message, type) => {
+            this.smartLog(message, type);
+        });
         
         // Connect price database to wallet system
         this.priceDatabase.findWalletByAddress = (address) => {
@@ -92,6 +102,189 @@ class WorldchainTradingBot {
             input: process.stdin,
             output: process.stdout
         });
+        
+        // Logging control system
+        this.loggingConfig = {
+            verbose: false,           // Show detailed logs
+            showPriceUpdates: false,  // Show price update details
+            showHoldStationLogs: false, // Show HoldStation SDK logs
+            showStrategyLogs: true,   // Show strategy status
+            showPositionLogs: true,   // Show position updates
+            showErrorLogs: true,      // Show errors
+            showSuccessLogs: true     // Show success messages
+        };
+    }
+    
+    // Logging control methods
+    setLoggingLevel(level) {
+        switch(level.toLowerCase()) {
+            case 'verbose':
+                this.loggingConfig.verbose = true;
+                this.loggingConfig.showPriceUpdates = true;
+                this.loggingConfig.showHoldStationLogs = true;
+                console.log('🔊 Logging set to VERBOSE mode');
+                break;
+            case 'normal':
+                this.loggingConfig.verbose = false;
+                this.loggingConfig.showPriceUpdates = false;
+                this.loggingConfig.showHoldStationLogs = false;
+                console.log('🔇 Logging set to NORMAL mode');
+                break;
+            case 'quiet':
+                this.loggingConfig.verbose = false;
+                this.loggingConfig.showPriceUpdates = false;
+                this.loggingConfig.showHoldStationLogs = false;
+                this.loggingConfig.showStrategyLogs = false;
+                this.loggingConfig.showPositionLogs = false;
+                console.log('🔇 Logging set to QUIET mode');
+                break;
+            case 'minimal':
+                this.loggingConfig.verbose = false;
+                this.loggingConfig.showPriceUpdates = false;
+                this.loggingConfig.showHoldStationLogs = false;
+                this.loggingConfig.showStrategyLogs = true;
+                this.loggingConfig.showPositionLogs = true;
+                this.loggingConfig.showErrorLogs = true;
+                this.loggingConfig.showSuccessLogs = false;
+                console.log('🔇 Logging set to MINIMAL mode');
+                break;
+            default:
+                console.log('❌ Invalid logging level. Use: verbose, normal, quiet, or minimal');
+        }
+    }
+    
+    // Smart logging method
+    smartLog(message, type = 'info', force = false) {
+        if (force || this.shouldShowLog(type)) {
+            switch(type) {
+                case 'price':
+                    if (this.loggingConfig.showPriceUpdates) console.log(message);
+                    break;
+                case 'holdstation':
+                    if (this.loggingConfig.showHoldStationLogs) console.log(message);
+                    break;
+                case 'strategy':
+                    if (this.loggingConfig.showStrategyLogs) console.log(message);
+                    break;
+                case 'position':
+                    if (this.loggingConfig.showPositionLogs) console.log(message);
+                    break;
+                case 'error':
+                    if (this.loggingConfig.showErrorLogs) console.log(`❌ ${message}`);
+                    break;
+                case 'success':
+                    if (this.loggingConfig.showSuccessLogs) console.log(`✅ ${message}`);
+                    break;
+                case 'info':
+                default:
+                    console.log(message);
+                    break;
+            }
+        }
+    }
+    
+    // Check if log should be shown
+    shouldShowLog(type) {
+        if (this.loggingConfig.verbose) return true;
+        
+        switch(type) {
+            case 'price':
+                return this.loggingConfig.showPriceUpdates;
+            case 'holdstation':
+                return this.loggingConfig.showHoldStationLogs;
+            case 'strategy':
+                return this.loggingConfig.showStrategyLogs;
+            case 'position':
+                return this.loggingConfig.showPositionLogs;
+            case 'error':
+                return this.loggingConfig.showErrorLogs;
+            case 'success':
+                return this.loggingConfig.showSuccessLogs;
+            default:
+                return true;
+        }
+    }
+    
+    // Logging Control Menu
+    async loggingControlMenu() {
+        while (true) {
+            console.clear();
+            console.log('🔊 LOGGING CONTROL');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            console.log('📊 Current Logging Status:');
+            console.log(`   🔍 Price Updates: ${this.loggingConfig.showPriceUpdates ? '🔊 ON' : '🔇 OFF'}`);
+            console.log(`   🚀 HoldStation SDK: ${this.loggingConfig.showHoldStationLogs ? '🔊 ON' : '🔇 OFF'}`);
+            console.log(`   🎯 Strategy Status: ${this.loggingConfig.showStrategyLogs ? '🔊 ON' : '🔇 OFF'}`);
+            console.log(`   📈 Position Updates: ${this.loggingConfig.showPositionLogs ? '🔊 ON' : '🔇 OFF'}`);
+            console.log(`   ❌ Error Messages: ${this.loggingConfig.showErrorLogs ? '🔊 ON' : '🔇 OFF'}`);
+            console.log(`   ✅ Success Messages: ${this.loggingConfig.showSuccessLogs ? '🔊 ON' : '🔇 OFF'}`);
+            console.log('');
+            console.log('🎛️  Quick Presets:');
+            console.log('1. 🔊 VERBOSE - Show all logs (debugging)');
+            console.log('2. 🔇 NORMAL - Show important logs only (default)');
+            console.log('3. 🔇 QUIET - Show minimal logs');
+            console.log('4. 🔇 MINIMAL - Show only strategy & position updates');
+            console.log('');
+            console.log('⚙️  Custom Control:');
+            console.log('5. 🔍 Toggle Price Update Logs');
+            console.log('6. 🚀 Toggle HoldStation SDK Logs');
+            console.log('7. 🎯 Toggle Strategy Logs');
+            console.log('8. 📈 Toggle Position Logs');
+            console.log('9. ❌ Toggle Error Logs');
+            console.log('10. ✅ Toggle Success Logs');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    this.setLoggingLevel('verbose');
+                    break;
+                case '2':
+                    this.setLoggingLevel('normal');
+                    break;
+                case '3':
+                    this.setLoggingLevel('quiet');
+                    break;
+                case '4':
+                    this.setLoggingLevel('minimal');
+                    break;
+                case '5':
+                    this.loggingConfig.showPriceUpdates = !this.loggingConfig.showPriceUpdates;
+                    console.log(`🔍 Price Update Logs: ${this.loggingConfig.showPriceUpdates ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '6':
+                    this.loggingConfig.showHoldStationLogs = !this.loggingConfig.showHoldStationLogs;
+                    console.log(`🚀 HoldStation SDK Logs: ${this.loggingConfig.showHoldStationLogs ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '7':
+                    this.loggingConfig.showStrategyLogs = !this.loggingConfig.showStrategyLogs;
+                    console.log(`🎯 Strategy Logs: ${this.loggingConfig.showStrategyLogs ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '8':
+                    this.loggingConfig.showPositionLogs = !this.loggingConfig.showPositionLogs;
+                    console.log(`📈 Position Logs: ${this.loggingConfig.showPositionLogs ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '9':
+                    this.loggingConfig.showErrorLogs = !this.loggingConfig.showErrorLogs;
+                    console.log(`❌ Error Logs: ${this.loggingConfig.showErrorLogs ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '10':
+                    this.loggingConfig.showSuccessLogs = !this.loggingConfig.showSuccessLogs;
+                    console.log(`✅ Success Logs: ${this.loggingConfig.showSuccessLogs ? '🔊 ON' : '🔇 OFF'}`);
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
     }
     
     // Setup price database integration with token discovery
@@ -196,7 +389,8 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('8. 📱 Telegram Notifications'));
         console.log(chalk.cyan('9. ⚙️  Configuration'));
         console.log(chalk.cyan('10. 📊 Portfolio Overview'));
-        console.log(chalk.red('11. 🚪 Exit'));
+        console.log(chalk.cyan('11. 🔊 Logging Control'));
+        console.log(chalk.red('12. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -2228,6 +2422,9 @@ class WorldchainTradingBot {
                     await this.portfolioSummary();
                     break;
                 case '11':
+                    await this.loggingControlMenu();
+                    break;
+                case '12':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
