@@ -242,6 +242,15 @@ class WorldchainTradingBot {
                     console.log(chalk.white(`   ⏱️  Runtime: ${runtime} minutes`));
                     console.log(chalk.white(`   🔍 Checks: ${checks} price checks`));
                     console.log(chalk.white(`   📊 Status: Monitoring for DIP opportunities`));
+                    
+                    // Show DIP buying levels if enabled
+                    if (strategy.dipBuyingLevels && strategy.dipBuyingLevels.length > 0) {
+                        console.log(chalk.cyan(`   🚀 Enhanced DIP Buying: ${strategy.dipBuyingLevels.length} levels`));
+                        strategy.dipBuyingLevels.forEach(level => {
+                            const executedIcon = level.executed ? '✅' : '⏳';
+                            console.log(chalk.white(`      ${executedIcon} Level ${level.level}: ${level.dipThreshold.toFixed(1)}% → ${level.buyAmount.toFixed(3)} WLD`));
+                        });
+                    }
                     console.log('');
                 });
             }
@@ -3258,6 +3267,83 @@ class WorldchainTradingBot {
                 return;
             }
 
+            // Configure DIP buying levels
+            console.log('\n🚀 ENHANCED DIP BUYING SYSTEM');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('💡 This system allows you to buy more when prices drop further');
+            console.log('📉 Each level triggers at a deeper dip with larger amounts');
+            console.log('💰 This improves your average entry price for better profits');
+            console.log('');
+            
+            const enableDipBuying = await this.getUserInput('Enable enhanced DIP buying? (y/N): ').toLowerCase() === 'y';
+            
+            let dipBuyingLevels = [];
+            
+            if (enableDipBuying) {
+                console.log('\n📊 DIP BUYING LEVELS CONFIGURATION:');
+                console.log('Level 1: Initial buy at your DIP threshold');
+                console.log('Level 2: Enhanced buy at 1.5x DIP threshold');
+                console.log('Level 3: Major buy at 2x DIP threshold');
+                console.log('Level 4: Extreme buy at 3x DIP threshold');
+                console.log('');
+                
+                // Level 1 (already configured)
+                dipBuyingLevels.push({
+                    level: 1,
+                    dipThreshold: dipThreshold,
+                    buyAmount: tradeAmount,
+                    description: 'Initial DIP buy',
+                    executed: false
+                });
+                
+                // Level 2
+                const level2Enabled = await this.getUserInput('Enable Level 2 (1.5x DIP, 1.5x amount)? (y/N): ').toLowerCase() === 'y';
+                if (level2Enabled) {
+                    const level2Amount = await this.getUserInput(`Level 2 buy amount (default: ${(tradeAmount * 1.5).toFixed(3)} WLD): `);
+                    const amount2 = level2Amount ? parseFloat(level2Amount) : tradeAmount * 1.5;
+                    dipBuyingLevels.push({
+                        level: 2,
+                        dipThreshold: dipThreshold * 1.5,
+                        buyAmount: amount2,
+                        description: 'Enhanced DIP buy (1.5x)',
+                        executed: false
+                    });
+                }
+                
+                // Level 3
+                const level3Enabled = await this.getUserInput('Enable Level 3 (2x DIP, 2x amount)? (y/N): ').toLowerCase() === 'y';
+                if (level3Enabled) {
+                    const level3Amount = await this.getUserInput(`Level 3 buy amount (default: ${(tradeAmount * 2).toFixed(3)} WLD): `);
+                    const amount3 = level3Amount ? parseFloat(level3Amount) : tradeAmount * 2;
+                    dipBuyingLevels.push({
+                        level: 2,
+                        dipThreshold: dipThreshold * 2,
+                        buyAmount: amount3,
+                        description: 'Major DIP buy (2x)',
+                        executed: false
+                    });
+                }
+                
+                // Level 4
+                const level4Enabled = await this.getUserInput('Enable Level 4 (3x DIP, 3x amount)? (y/N): ').toLowerCase() === 'y';
+                if (level4Enabled) {
+                    const level4Amount = await this.getUserInput(`Level 4 buy amount (default: ${(tradeAmount * 3).toFixed(3)} WLD): `);
+                    const amount4 = level4Amount ? parseFloat(level4Amount) : tradeAmount * 3;
+                    dipBuyingLevels.push({
+                        level: 4,
+                        dipThreshold: dipThreshold * 3,
+                        buyAmount: amount4,
+                        description: 'Extreme DIP buy (3x)',
+                        executed: false
+                    });
+                }
+                
+                console.log('\n✅ DIP Buying Levels Configured:');
+                dipBuyingLevels.forEach(level => {
+                    console.log(`   Level ${level.level}: ${level.dipThreshold.toFixed(1)}% dip → ${level.buyAmount.toFixed(3)} WLD`);
+                });
+            }
+
             // Create strategy with enhanced configuration
             const strategyConfig = {
                 name: name.trim(),
@@ -3277,7 +3363,9 @@ class WorldchainTradingBot {
                 profitRangeMin,
                 profitRangeMax,
                 profitRangeSteps,
-                profitRangeMode
+                profitRangeMode,
+                // Enhanced DIP Buying Configuration
+                dipBuyingLevels: dipBuyingLevels.length > 0 ? dipBuyingLevels : undefined
             };
 
             const strategyId = await this.strategyBuilder.createStrategy(strategyConfig);
@@ -3304,6 +3392,16 @@ class WorldchainTradingBot {
             console.log(`   4️⃣ CONTINUE buying on additional DIPs to improve average price`);
             console.log(`   5️⃣ NEVER buy above current average price`);
             console.log(`   6️⃣ SELL ALL positions when ${profitTarget}% profit above average reached`);
+            
+            if (dipBuyingLevels.length > 0) {
+                console.log(`\n🚀 ENHANCED DIP BUYING STRATEGY:`);
+                console.log(`   📉 Multiple buy levels for deeper dips:`);
+                dipBuyingLevels.forEach(level => {
+                    console.log(`      Level ${level.level}: ${level.dipThreshold.toFixed(1)}% dip → ${level.buyAmount.toFixed(3)} WLD`);
+                });
+                console.log(`   💰 This improves your average entry price significantly`);
+                console.log(`   📈 Better average price = higher profits when coin bounces back`);
+            }
 
         } catch (error) {
             console.log(`❌ Error creating strategy: ${error.message}`);

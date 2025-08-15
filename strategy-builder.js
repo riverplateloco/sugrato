@@ -85,6 +85,38 @@ class StrategyBuilder extends EventEmitter {
             maxHistoryLength: 50, // Keep last 50 price points
             lastVolatilityCheck: 0,
             
+            // Enhanced DIP buying system with configurable levels
+            dipBuyingLevels: config.dipBuyingLevels || [
+                {
+                    level: 1,
+                    dipThreshold: config.dipThreshold || 15,        // First buy at 15% dip
+                    buyAmount: config.tradeAmount || 0.1,          // Initial buy amount
+                    description: 'Initial DIP buy',
+                    executed: false
+                },
+                {
+                    level: 2,
+                    dipThreshold: (config.dipThreshold || 15) * 1.5,  // Second buy at 22.5% dip
+                    buyAmount: (config.tradeAmount || 0.1) * 1.5,     // 1.5x initial amount
+                    description: 'Enhanced DIP buy (1.5x)',
+                    executed: false
+                },
+                {
+                    level: 3,
+                    dipThreshold: (config.dipThreshold || 15) * 2,    // Third buy at 30% dip
+                    buyAmount: (config.tradeAmount || 0.1) * 2,       // 2x initial amount
+                    description: 'Major DIP buy (2x)',
+                    executed: false
+                },
+                {
+                    level: 4,
+                    dipThreshold: (config.dipThreshold || 15) * 3,    // Fourth buy at 45% dip
+                    buyAmount: (config.tradeAmount || 0.1) * 3,       // 3x initial amount
+                    description: 'Extreme DIP buy (3x)',
+                    executed: false
+                }
+            ],
+            
             // Smart DIP buying thresholds (adaptive based on volatility)
             smartDipThresholds: {
                 small: config.dipThreshold || 15,      // 15% - normal dip
@@ -147,6 +179,8 @@ class StrategyBuilder extends EventEmitter {
         console.log(`   📈 Smart Profit Taking: 5-tier system (Quick→Normal→Good→Excellent→Extreme)`);
         console.log(`   💰 Dynamic Position Sizing: Adapts to DIP severity`);
         console.log(`   🛡️ Average Price Protection: Only buys below average`);
+        console.log(`   🚀 Enhanced DIP Buying: ${strategy.dipBuyingLevels.length} configurable levels`);
+        console.log(`   💰 DIP Buy Amounts: ${strategy.dipBuyingLevels.map(l => `${l.buyAmount} WLD`).join(' → ')}`);
         
         return strategy;
     }
@@ -1862,6 +1896,17 @@ class StrategyBuilder extends EventEmitter {
             allPositions.push(...positions);
         }
         return allPositions;
+    }
+    
+    // Reset DIP buying levels for a strategy (called when position is closed)
+    resetDipBuyingLevels(strategyId) {
+        const strategy = this.customStrategies.get(strategyId);
+        if (strategy && strategy.dipBuyingLevels) {
+            strategy.dipBuyingLevels.forEach(level => {
+                level.executed = false;
+            });
+            console.log(`🔄 Reset DIP buying levels for strategy: ${strategy.name}`);
+        }
     }
     
     // Get strategy by ID
