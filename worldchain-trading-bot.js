@@ -1830,11 +1830,11 @@ class WorldchainTradingBot {
         console.log('   • Set priority fee to 0.001 gwei');
     }
     
-    // Automatic token discovery for new wallets
+    // Automatic token discovery for new wallets with price capture
     async performAutomaticTokenDiscovery(walletData) {
         try {
-            console.log(chalk.cyan('🔍 Starting automatic token discovery...'));
-            console.log(chalk.gray('This will scan the wallet for all available tokens'));
+            console.log(chalk.cyan('🔍 Starting automatic token discovery with price capture...'));
+            console.log(chalk.gray('This will scan the wallet for all available tokens and capture current prices'));
             
             // Check ETH balance first
             const ethBalance = await this.provider.getBalance(walletData.address);
@@ -1844,49 +1844,79 @@ class WorldchainTradingBot {
                 console.log(chalk.yellow('⚠️  Wallet has no ETH balance - token discovery may be limited'));
             }
             
-            // Discover tokens using the token discovery service
-            console.log(chalk.cyan('🔍 Scanning for tokens...'));
-            const discoveredTokens = await this.tokenDiscovery.discoverTokens(walletData.address);
+            // Discover tokens with price capture using the enhanced token discovery service
+            console.log(chalk.cyan('🔍 Scanning for tokens and capturing discovery prices...'));
+            const discoveredTokens = await this.tokenDiscovery.discoverTokensWithPrices(walletData.address, {
+                captureDiscoveryPrices: true,
+                includeZeroBalances: false,
+                maxTokens: 50
+            });
             
-            if (discoveredTokens && Object.keys(discoveredTokens).length > 0) {
-                const tokenCount = Object.keys(discoveredTokens).length;
-                console.log(chalk.green(`✅ Discovered ${tokenCount} tokens!`));
+            if (discoveredTokens && discoveredTokens.length > 0) {
+                const tokenCount = discoveredTokens.length;
+                console.log(chalk.green(`✅ Discovered ${tokenCount} tokens with price capture!`));
                 
-                // Update wallet with discovered tokens
-                walletData.tokens = Object.entries(discoveredTokens).map(([address, tokenInfo]) => ({
-                    address: address,
+                // Update wallet with discovered tokens (enhanced with price data)
+                walletData.tokens = discoveredTokens.map(tokenInfo => ({
+                    address: tokenInfo.address,
                     symbol: tokenInfo.symbol || 'UNKNOWN',
                     name: tokenInfo.name || 'Unknown Token',
                     decimals: tokenInfo.decimals || 18,
                     balance: tokenInfo.balance || '0',
-                    discovered: new Date().toISOString()
+                    discovered: tokenInfo.discoveryDate || new Date().toISOString(),
+                    discoveryPrice: tokenInfo.discoveryPrice || 0,
+                    discoveryPriceInfo: tokenInfo.discoveryPriceInfo || null,
+                    baselineAveragePrice: tokenInfo.baselineAveragePrice || 0,
+                    priceHistory: tokenInfo.priceHistory || []
                 }));
                 
                 // Save updated wallet data
                 this.saveWallets();
                 
-                // Display discovered tokens
-                console.log(chalk.white('\n📋 DISCOVERED TOKENS:'));
+                // Display discovered tokens with discovery prices
+                console.log(chalk.white('\n📋 DISCOVERED TOKENS WITH DISCOVERY PRICES:'));
                 walletData.tokens.forEach((token, index) => {
                     console.log(chalk.cyan(`${index + 1}. ${token.symbol} (${token.name})`));
                     console.log(chalk.white(`   📍 Address: ${token.address}`));
                     console.log(chalk.white(`   💰 Balance: ${token.balance} ${token.symbol}`));
                     console.log(chalk.white(`   🔢 Decimals: ${token.decimals}`));
+                    
+                    // Display discovery price information
+                    if (token.discoveryPrice && token.discoveryPrice > 0) {
+                        const priceSource = token.discoveryPriceInfo?.source || 'unknown';
+                        const confidence = token.discoveryPriceInfo?.confidence || 'unknown';
+                        console.log(chalk.green(`   💎 Discovery Price: ${token.discoveryPrice.toFixed(8)} WLD`));
+                        console.log(chalk.gray(`   📊 Source: ${priceSource} (${confidence} confidence)`));
+                        console.log(chalk.yellow(`   🎯 Baseline Average: ${token.baselineAveragePrice.toFixed(8)} WLD`));
+                    } else {
+                        console.log(chalk.red(`   ❌ No discovery price available`));
+                    }
                 });
                 
-                // Add discovered tokens to global discovered tokens list
-                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
-                    this.discoveredTokens[address] = tokenInfo;
+                // Add discovered tokens to global discovered tokens list (with price data)
+                for (const tokenInfo of discoveredTokens) {
+                    this.discoveredTokens[tokenInfo.address] = {
+                        ...tokenInfo,
+                        discoveryPrice: tokenInfo.discoveryPrice,
+                        discoveryPriceInfo: tokenInfo.discoveryPriceInfo,
+                        baselineAveragePrice: tokenInfo.baselineAveragePrice,
+                        priceHistory: tokenInfo.priceHistory
+                    };
                 }
                 this.saveDiscoveredTokens();
                 
-                // Add tokens to price database for monitoring
-                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
-                    this.priceDatabase.addToken(address, tokenInfo);
+                // Add tokens to price database for monitoring (with baseline price)
+                for (const tokenInfo of discoveredTokens) {
+                    this.priceDatabase.addToken(tokenInfo.address, {
+                        ...tokenInfo,
+                        baselinePrice: tokenInfo.baselineAveragePrice,
+                        discoveryTimestamp: tokenInfo.discoveryDate
+                    });
                 }
                 
-                console.log(chalk.green('\n✅ Token discovery completed successfully!'));
+                console.log(chalk.green('\n✅ Token discovery with price capture completed successfully!'));
                 console.log(chalk.yellow('💡 All discovered tokens have been added to price monitoring'));
+                console.log(chalk.cyan('🎯 Discovery prices set as baseline average prices for trading strategies'));
                 
             } else {
                 console.log(chalk.yellow('📭 No tokens discovered in this wallet'));

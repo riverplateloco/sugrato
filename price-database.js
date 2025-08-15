@@ -106,7 +106,13 @@ class PriceDatabase extends EventEmitter {
                 priceSource: 'none',
                 consecutiveFailures: 0,
                 lastFailure: 0,
-                addedAt: Date.now()
+                addedAt: Date.now(),
+                // Enhanced with discovery price tracking
+                discoveryPrice: tokenInfo.discoveryPrice || tokenInfo.baselinePrice || 0,
+                discoveryTimestamp: tokenInfo.discoveryTimestamp || tokenInfo.discoveryDate || Date.now(),
+                baselineAveragePrice: tokenInfo.baselineAveragePrice || tokenInfo.baselinePrice || 0,
+                discoveryPriceInfo: tokenInfo.discoveryPriceInfo || null,
+                priceHistory: tokenInfo.priceHistory || []
             });
         }
         
@@ -812,6 +818,67 @@ class PriceDatabase extends EventEmitter {
         return null;
     }
     
+    // Get baseline average price for a token (from discovery)
+    getBaselineAveragePrice(tokenAddress) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (priceData && priceData.baselineAveragePrice > 0) {
+            return {
+                price: priceData.baselineAveragePrice,
+                discoveryPrice: priceData.discoveryPrice,
+                discoveryTimestamp: priceData.discoveryTimestamp,
+                discoveryPriceInfo: priceData.discoveryPriceInfo,
+                source: 'discovery_baseline'
+            };
+        }
+        
+        return null;
+    }
+    
+    // Get discovery price information for a token
+    getDiscoveryPriceInfo(tokenAddress) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (priceData && priceData.discoveryPrice > 0) {
+            return {
+                discoveryPrice: priceData.discoveryPrice,
+                discoveryTimestamp: priceData.discoveryTimestamp,
+                discoveryPriceInfo: priceData.discoveryPriceInfo,
+                baselineAveragePrice: priceData.baselineAveragePrice,
+                priceHistory: priceData.priceHistory || []
+            };
+        }
+        
+        return null;
+    }
+    
+    // Calculate price performance since discovery
+    getPricePerformanceSinceDiscovery(tokenAddress) {
+        const key = tokenAddress.toLowerCase();
+        const priceData = this.priceData.get(key);
+        
+        if (!priceData || !priceData.discoveryPrice || !priceData.currentPrice) {
+            return null;
+        }
+        
+        const discoveryPrice = priceData.discoveryPrice;
+        const currentPrice = priceData.currentPrice;
+        const priceChange = ((currentPrice - discoveryPrice) / discoveryPrice) * 100;
+        const timeSinceDiscovery = Date.now() - priceData.discoveryTimestamp;
+        
+        return {
+            discoveryPrice,
+            currentPrice,
+            priceChange,
+            priceChangePercent: priceChange,
+            timeSinceDiscovery,
+            timeSinceDiscoveryFormatted: this.formatTimeframe(timeSinceDiscovery),
+            performance: priceChange > 0 ? 'positive' : priceChange < 0 ? 'negative' : 'neutral'
+        };
+    }
+    
     // Get status summary
     getStatus() {
         return {
@@ -821,7 +888,8 @@ class PriceDatabase extends EventEmitter {
             totalTriggers: this.activeTriggers.size,
             totalPricePoints: this.getTotalPricePoints(),
             updateInterval: this.updateInterval,
-            lastUpdate: Math.max(...Array.from(this.priceData.values()).map(p => p.lastPriceUpdate || 0))
+            lastUpdate: Math.max(...Array.from(this.priceData.values()).map(p => p.lastPriceUpdate || 0)),
+            tokensWithDiscoveryPrices: Array.from(this.priceData.values()).filter(p => p.discoveryPrice > 0).length
         };
     }
 }
