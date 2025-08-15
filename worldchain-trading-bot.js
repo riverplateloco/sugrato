@@ -1830,6 +1830,129 @@ class WorldchainTradingBot {
         console.log('   • Set priority fee to 0.001 gwei');
     }
     
+    // Automatic token discovery for new wallets
+    async performAutomaticTokenDiscovery(walletData) {
+        try {
+            console.log(chalk.cyan('🔍 Starting automatic token discovery...'));
+            console.log(chalk.gray('This will scan the wallet for all available tokens'));
+            
+            // Check ETH balance first
+            const ethBalance = await this.provider.getBalance(walletData.address);
+            console.log(chalk.white(`💰 ETH Balance: ${ethers.formatEther(ethBalance)} ETH`));
+            
+            if (ethBalance === BigInt(0)) {
+                console.log(chalk.yellow('⚠️  Wallet has no ETH balance - token discovery may be limited'));
+            }
+            
+            // Discover tokens using the token discovery service
+            console.log(chalk.cyan('🔍 Scanning for tokens...'));
+            const discoveredTokens = await this.tokenDiscovery.discoverTokens(walletData.address);
+            
+            if (discoveredTokens && Object.keys(discoveredTokens).length > 0) {
+                const tokenCount = Object.keys(discoveredTokens).length;
+                console.log(chalk.green(`✅ Discovered ${tokenCount} tokens!`));
+                
+                // Update wallet with discovered tokens
+                walletData.tokens = Object.entries(discoveredTokens).map(([address, tokenInfo]) => ({
+                    address: address,
+                    symbol: tokenInfo.symbol || 'UNKNOWN',
+                    name: tokenInfo.name || 'Unknown Token',
+                    decimals: tokenInfo.decimals || 18,
+                    balance: tokenInfo.balance || '0',
+                    discovered: new Date().toISOString()
+                }));
+                
+                // Save updated wallet data
+                this.saveWallets();
+                
+                // Display discovered tokens
+                console.log(chalk.white('\n📋 DISCOVERED TOKENS:'));
+                walletData.tokens.forEach((token, index) => {
+                    console.log(chalk.cyan(`${index + 1}. ${token.symbol} (${token.name})`));
+                    console.log(chalk.white(`   📍 Address: ${token.address}`));
+                    console.log(chalk.white(`   💰 Balance: ${token.balance} ${token.symbol}`));
+                    console.log(chalk.white(`   🔢 Decimals: ${token.decimals}`));
+                });
+                
+                // Add discovered tokens to global discovered tokens list
+                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
+                    this.discoveredTokens[address] = tokenInfo;
+                }
+                this.saveDiscoveredTokens();
+                
+                // Add tokens to price database for monitoring
+                for (const [address, tokenInfo] of Object.entries(discoveredTokens)) {
+                    this.priceDatabase.addToken(address, tokenInfo);
+                }
+                
+                console.log(chalk.green('\n✅ Token discovery completed successfully!'));
+                console.log(chalk.yellow('💡 All discovered tokens have been added to price monitoring'));
+                
+            } else {
+                console.log(chalk.yellow('📭 No tokens discovered in this wallet'));
+                console.log(chalk.gray('   This is normal for new or empty wallets'));
+            }
+            
+            // Check if we should run gas estimation for this wallet
+            if (ethBalance > BigInt(0) && !this.gasEstimation.isInitialized) {
+                console.log(chalk.cyan('\n⛽ Wallet has ETH - consider running gas estimation for optimal trading'));
+                console.log(chalk.yellow('   Use option 14 (Gas Estimation) from the main menu'));
+            }
+            
+        } catch (error) {
+            console.log(chalk.red(`❌ Token discovery failed: ${error.message}`));
+            console.log(chalk.yellow('   You can manually discover tokens later from the Token Discovery menu'));
+        }
+    }
+    
+    // Refresh token discovery for existing wallets
+    async refreshTokenDiscovery() {
+        if (this.wallets.length === 0) {
+            console.log(chalk.yellow('📭 No wallets available for token discovery.'));
+            return;
+        }
+        
+        console.log(chalk.cyan('🔄 REFRESH TOKEN DISCOVERY'));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        // Show available wallets
+        console.log(chalk.white('📋 Available Wallets:'));
+        this.wallets.forEach((wallet, index) => {
+            console.log(chalk.cyan(`${index + 1}. ${wallet.name}`));
+            console.log(chalk.white(`   📍 Address: ${wallet.address}`));
+            console.log(chalk.white(`   🪙 Current Tokens: ${wallet.tokens.length}`));
+        });
+        
+        console.log('');
+        const choice = await this.getUserInput('Select wallet to refresh (or 0 for all wallets): ');
+        
+        if (choice === '0') {
+            // Refresh all wallets
+            console.log(chalk.cyan('\n🔄 Refreshing token discovery for all wallets...'));
+            
+            for (const wallet of this.wallets) {
+                console.log(chalk.white(`\n🔍 Refreshing ${wallet.name}...`));
+                await this.performAutomaticTokenDiscovery(wallet);
+                await this.sleep(1000); // Small delay between wallets
+            }
+            
+            console.log(chalk.green('\n✅ Token discovery refreshed for all wallets!'));
+            
+        } else {
+            // Refresh specific wallet
+            const walletIndex = parseInt(choice) - 1;
+            if (walletIndex >= 0 && walletIndex < this.wallets.length) {
+                const wallet = this.wallets[walletIndex];
+                console.log(chalk.cyan(`\n🔄 Refreshing token discovery for ${wallet.name}...`));
+                await this.performAutomaticTokenDiscovery(wallet);
+            } else {
+                console.log(chalk.red('❌ Invalid wallet selection.'));
+            }
+        }
+        
+        await this.getUserInput('\nPress Enter to continue...');
+    }
+    
     // Setup price database integration with token discovery
     setupPriceDatabaseIntegration() {
         // Auto-track discovered tokens
@@ -1952,7 +2075,8 @@ class WorldchainTradingBot {
             console.log(chalk.cyan('3. 📋 List All Wallets'));
             console.log(chalk.cyan('4. 🗑️  Remove Wallet'));
             console.log(chalk.cyan('5. 💰 Check Wallet Balance'));
-            console.log(chalk.red('6. ⬅️  Back to Main Menu'));
+            console.log(chalk.cyan('6. 🔄 Refresh Token Discovery'));
+            console.log(chalk.red('7. ⬅️  Back to Main Menu'));
             
             const choice = await this.getUserInput('\nSelect option: ');
             
@@ -1971,6 +2095,9 @@ class WorldchainTradingBot {
                     break;
                 case '5':
                     await this.checkWalletBalance();
+                    break;
+                case '6':
+                    await this.refreshTokenDiscovery();
                     break;
                 case '6':
                     return;
@@ -2003,6 +2130,10 @@ class WorldchainTradingBot {
             console.log(chalk.white(`📍 Address: ${walletData.address}`));
             console.log(chalk.yellow('🔐 Private Key: ') + chalk.red(walletData.privateKey));
             console.log(chalk.red('\n⚠️  IMPORTANT: Save your private key securely!'));
+            
+            // Automatic token discovery for new wallet
+            console.log(chalk.cyan('\n🔍 Starting automatic token discovery...'));
+            await this.performAutomaticTokenDiscovery(walletData);
             
             await this.getUserInput('\nPress Enter to continue...');
         } catch (error) {
@@ -2040,6 +2171,10 @@ class WorldchainTradingBot {
             console.log(chalk.green('\n✅ Wallet imported successfully!'));
             console.log(chalk.white(`📝 Name: ${walletData.name}`));
             console.log(chalk.white(`📍 Address: ${walletData.address}`));
+            
+            // Automatic token discovery for imported wallet
+            console.log(chalk.cyan('\n🔍 Starting automatic token discovery...'));
+            await this.performAutomaticTokenDiscovery(walletData);
             
             await this.getUserInput('\nPress Enter to continue...');
         } catch (error) {
