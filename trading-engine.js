@@ -300,7 +300,7 @@ class AdvancedTradingEngine {
     }
 
     // Monitor price changes for arbitrage opportunities
-    async monitorPriceChanges(tokenAddresses, callback, interval = 5000) {
+    async monitorPriceChanges(tokenAddresses, callback, interval = 3000) {
         const monitor = async () => {
             try {
                 const prices = await this.getBatchPrices(tokenAddresses);

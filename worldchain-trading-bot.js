@@ -113,6 +113,9 @@ class WorldchainTradingBot {
             showErrorLogs: true,      // Show errors
             showSuccessLogs: true     // Show success messages
         };
+        
+        // Price checking interval configuration (default: 3 seconds)
+        this.priceCheckInterval = this.config.priceCheckInterval || 3000; // 3 seconds
     }
     
     // Logging control methods
@@ -759,6 +762,132 @@ class WorldchainTradingBot {
         }
     }
     
+    // Price Check Interval Configuration Menu
+    async priceCheckIntervalMenu() {
+        while (true) {
+            console.clear();
+            console.log('⏱️  PRICE CHECK INTERVAL CONFIGURATION');
+            console.log('════════════════════════════════════════════════════════════');
+            console.log('');
+            console.log(`📊 Current Price Check Interval: ${this.priceCheckInterval / 1000} seconds`);
+            console.log('');
+            console.log('🎛️  Quick Presets:');
+            console.log('1. ⚡ ULTRA FAST - 1 second (maximum responsiveness)');
+            console.log('2. 🚀 FAST - 2 seconds (high responsiveness)');
+            console.log('3. ⚡ NORMAL - 3 seconds (balanced, recommended)');
+            console.log('4. 🐌 SLOW - 4 seconds (lower resource usage)');
+            console.log('5. 🐌 VERY SLOW - 5 seconds (minimum resource usage)');
+            console.log('');
+            console.log('⚙️  Custom Control:');
+            console.log('6. 🔧 Set Custom Interval (1-5 seconds)');
+            console.log('7. 📊 View Current Settings');
+            console.log('8. 🔄 Reset to Default (3 seconds)');
+            console.log('');
+            console.log('0. ⬅️  Back to Main Menu');
+            console.log('');
+            
+            const choice = await this.getUserInput('Select option: ');
+            
+            switch (choice) {
+                case '1':
+                    this.setPriceCheckInterval(1000);
+                    break;
+                case '2':
+                    this.setPriceCheckInterval(2000);
+                    break;
+                case '3':
+                    this.setPriceCheckInterval(3000);
+                    break;
+                case '4':
+                    this.setPriceCheckInterval(4000);
+                    break;
+                case '5':
+                    this.setPriceCheckInterval(5000);
+                    break;
+                case '6':
+                    await this.setCustomPriceCheckInterval();
+                    break;
+                case '7':
+                    this.displayPriceCheckIntervalInfo();
+                    break;
+                case '8':
+                    this.setPriceCheckInterval(3000);
+                    break;
+                case '0':
+                    return;
+                default:
+                    console.log(chalk.red('❌ Invalid option'));
+                    await this.sleep(1500);
+            }
+            
+            await this.sleep(2000);
+        }
+    }
+    
+    // Set price check interval
+    setPriceCheckInterval(intervalMs) {
+        const oldInterval = this.priceCheckInterval;
+        this.priceCheckInterval = intervalMs;
+        
+        // Update config
+        if (!this.config.priceCheckInterval) {
+            this.config.priceCheckInterval = {};
+        }
+        this.config.priceCheckInterval = intervalMs;
+        this.saveConfig();
+        
+        console.log(chalk.green(`✅ Price check interval updated!`));
+        console.log(chalk.white(`   📊 Old interval: ${oldInterval / 1000} seconds`));
+        console.log(chalk.white(`   📊 New interval: ${this.priceCheckInterval / 1000} seconds`));
+        console.log(chalk.yellow(`   💡 Changes will apply to new strategies and price monitoring`));
+    }
+    
+    // Set custom price check interval
+    async setCustomPriceCheckInterval() {
+        console.log('\n🔧 CUSTOM PRICE CHECK INTERVAL');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log('📊 Enter the desired interval in seconds (1-5):');
+        console.log('   • 1 second = Maximum responsiveness, higher resource usage');
+        console.log('   • 2 seconds = High responsiveness, moderate resource usage');
+        console.log('   • 3 seconds = Balanced performance (recommended)');
+        console.log('   • 4 seconds = Lower responsiveness, lower resource usage');
+        console.log('   • 5 seconds = Minimum responsiveness, minimum resource usage');
+        console.log('');
+        
+        const input = await this.getUserInput('Enter interval (1-5 seconds): ');
+        const interval = parseInt(input);
+        
+        if (isNaN(interval) || interval < 1 || interval > 5) {
+            console.log(chalk.red('❌ Invalid interval. Please enter a number between 1 and 5.'));
+            return;
+        }
+        
+        this.setPriceCheckInterval(interval * 1000);
+    }
+    
+    // Display price check interval information
+    displayPriceCheckIntervalInfo() {
+        console.log('\n📊 PRICE CHECK INTERVAL INFORMATION');
+        console.log('════════════════════════════════════════════════════════════');
+        console.log('');
+        console.log(`⏱️  Current Interval: ${this.priceCheckInterval / 1000} seconds`);
+        console.log(`📊 Config Value: ${this.config.priceCheckInterval || 'Not set (using default)'}`);
+        console.log('');
+        console.log('💡 What this setting affects:');
+        console.log('   • Strategy price monitoring frequency');
+        console.log('   • DIP detection responsiveness');
+        console.log('   • Position tracking update frequency');
+        console.log('   • Resource usage and performance');
+        console.log('');
+        console.log('🎯 Recommendations:');
+        console.log('   • 1-2 seconds: For aggressive trading and maximum responsiveness');
+        console.log('   • 3 seconds: Balanced performance (default, recommended)');
+        console.log('   • 4-5 seconds: For conservative trading and lower resource usage');
+        console.log('');
+        console.log('⚠️  Note: Lower intervals use more resources but provide faster response times');
+    }
+    
     // Setup price database integration with token discovery
     setupPriceDatabaseIntegration() {
         // Auto-track discovered tokens
@@ -863,7 +992,8 @@ class WorldchainTradingBot {
         console.log(chalk.cyan('10. 📊 Portfolio Overview'));
         console.log(chalk.cyan('11. 🔊 Logging Control'));
         console.log(chalk.cyan('12. 🚀 Multi-Strategy Dashboard'));
-        console.log(chalk.red('13. 🚪 Exit'));
+        console.log(chalk.cyan('13. ⏱️  Price Check Interval'));
+        console.log(chalk.red('14. 🚪 Exit'));
         console.log(chalk.gray('─'.repeat(30)));
     }
 
@@ -2889,6 +3019,9 @@ class WorldchainTradingBot {
                     await this.multiStrategyDashboard();
                     break;
                 case '13':
+                    await this.priceCheckIntervalMenu();
+                    break;
+                case '14':
                     console.log(chalk.green('\n👋 Thank you for using WorldChain Trading Bot!'));
                     console.log(chalk.yellow('💡 Remember to keep your private keys secure!'));
                     
@@ -3355,7 +3488,7 @@ class WorldchainTradingBot {
                 profitTarget,
                 tradeAmount,
                 maxSlippage,
-                priceCheckInterval: 30000, // 30 seconds for responsive monitoring
+                priceCheckInterval: this.priceCheckInterval, // Use configured interval
                 dipTimeframe,
                 enableHistoricalComparison,
                 // Profit Range Configuration
@@ -3383,7 +3516,7 @@ class WorldchainTradingBot {
             }
             
             console.log(`💰 Trade Amount: ${tradeAmount} WLD`);
-            console.log(`⏱️ Monitoring: Every 30s, DIP detection over ${dipTimeframeLabel}`);
+            console.log(`⏱️ Monitoring: Every ${this.priceCheckInterval / 1000}s, DIP detection over ${dipTimeframeLabel}`);
             console.log(`📊 Historical Analysis: ${enableHistoricalComparison ? 'ENABLED' : 'DISABLED'}`);
             console.log(`\n🎯 AVERAGE PRICE STRATEGY BEHAVIOR:`);
             console.log(`   1️⃣ Monitor ${tokenInfo.symbol} price continuously`);
@@ -4210,7 +4343,7 @@ class WorldchainTradingBot {
              } catch (error) {
                  console.log(`❌ Tracking error: ${error.message}`);
              }
-         }, 5000); // Update every 5 seconds
+         }, this.priceCheckInterval); // Update every configured interval
          
          // Allow user to stop tracking early
          setTimeout(async () => {

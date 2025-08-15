@@ -58,7 +58,7 @@ class StrategyBuilder extends EventEmitter {
             profitRangeMode: config.profitRangeMode || 'linear', // 'linear', 'aggressive', 'conservative'
             
             // Enhanced DIP detection settings
-            priceCheckInterval: config.priceCheckInterval || 30000, // 30 seconds for more frequent checks
+            priceCheckInterval: config.priceCheckInterval || 3000, // 3 seconds for more frequent checks
             dipTimeframe: config.dipTimeframe || 300000, // Default: 5 minutes (300000ms)
             dipTimeframeLabel: this.getTimeframeLabel(config.dipTimeframe || 300000),
             

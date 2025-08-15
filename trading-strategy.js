@@ -17,7 +17,7 @@ class TradingStrategy extends EventEmitter {
             maxSlippage: parseFloat(process.env.MAX_SLIPPAGE) || 1.0, // Max 1% slippage
             
             // Monitoring settings
-            priceCheckInterval: parseInt(process.env.PRICE_CHECK_INTERVAL) || 5000, // 5 seconds
+            priceCheckInterval: parseInt(process.env.PRICE_CHECK_INTERVAL) || 3000, // 3 seconds
             enableDipBuying: process.env.ENABLE_DIP_BUYING === 'true' || false,
             enableAutoSell: process.env.ENABLE_AUTO_SELL === 'true' || true,
             
